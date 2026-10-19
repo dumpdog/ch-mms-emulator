@@ -1,0 +1,8 @@
+{
+  "name": "mms-emulator",
+  "version": "0.1.0",
+  "description": "Autonomic Mirage MMS emulator for Crestron Home (discovery, CIP client, CRPC browse). Phase 1: protocol + demo backend.",
+  "private": true,
+  "type": "commonjs",
+  "scripts": { "start": "node index.js", "test": "node --test test/*.test.js" }
+}

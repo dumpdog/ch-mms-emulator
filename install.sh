@@ -1,0 +1,286 @@
+#!/usr/bin/env bash
+# Installer for the Mirage MMS emulator (Raspberry Pi OS / Debian). Crestron Home sees an Autonomic Mirage MMS; each of its
+# player slots is driven by either a Plexamp/Caldera player (your Plex library) or a real BluOS player.
+#
+#   ./install.sh
+#
+# Safe to re-run: it keeps your existing answers as defaults, so re-running also applies updates after copying new files.
+#   ./install.sh [--dry-run] [--yes] [--model 5A|3E] [--slot KEY=plexamp:ADDR | KEY=bluos:ADDR[#N] | KEY=none]...
+#                [--plex-url URL] [--hostname NAME] [--status] [--uninstall]
+# BluOS devices with several outputs: ADDR#N picks output N (port 11000 + 10*(N-1)), e.g. --slot B=bluos:192.168.1.50#2
+# Slot keys: MAIN, A, B, C, D, USB  (5A: Main, Player A-D, USB;  3E: Main, Player A, Player B).
+# Non-interactive: pass --yes with the --slot options (and PLEX_URL / PLEX_TOKEN in the environment or .env when any slot is plexamp).
+# Do not run it while a real Mirage MMS is on the same network (same discovery and console ports).
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$DIR"
+
+DRY=0; YES=0; UNINSTALL=0; STATUS=0; MODEL_OPT=""; HOST_OPT=""; PLEXURL_OPT=""; SLOT_OPTS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run) DRY=1 ;;
+    --yes|-y) YES=1 ;;
+    --model) shift; MODEL_OPT="${1:?--model needs 5A or 3E}" ;;
+    --slot) shift; SLOT_OPTS+=("${1:?--slot needs KEY=plexamp:ADDR, KEY=bluos:ADDR or KEY=none}") ;;
+    --plex-url) shift; PLEXURL_OPT="${1:?--plex-url needs an address}" ;;
+    --hostname) shift; HOST_OPT="${1:?--hostname needs a name}" ;;
+    --uninstall) UNINSTALL=1 ;;
+    --status) STATUS=1 ;;
+    -h|--help) sed -n "2,14p" "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "Unknown option: $1 (try --help)" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
+warn() { printf '  \033[33m!\033[0m %s\n' "$*" >&2; }
+step() { printf '\n\033[1m%s\033[0m\n' "$*"; }
+die()  { printf '\n\033[31mError:\033[0m %s\n' "$*" >&2; exit 1; }
+run()  { if (( DRY )); then printf '  [dry-run] %s\n' "$*"; else "$@"; fi; }
+
+[[ $EUID -ne 0 ]] || die "Run this as your normal user (not root); it uses sudo only where needed."
+command -v sudo >/dev/null || die "sudo is required to install the systemd service."
+RUN_USER="$(id -un)"
+UNIT=mms-emulator
+
+confirm() { # confirm "question" default(y|n)
+  local def=${2:-n} ans
+  (( YES )) && { [[ $def == y ]]; return; }
+  printf '%s [%s] ' "$1" "$([[ $def == y ]] && echo Y/n || echo y/N)" >&2
+  read -r ans || true; ans=${ans:-$def}; [[ $ans =~ ^[Yy] ]]
+}
+envget() { [[ -f .env ]] && { grep -E "^$1=" .env | tail -1 | cut -d= -f2- || true; } || true; }
+bluos_url() { # bluos_url "host[:port][#N]" -> URL; output N of a multi-output device listens on port 11000 + 10*(N-1)
+  local v="${1//[[:space:]]/}" n=1
+  if [[ $v == *'#'* ]]; then n="${v#*#}"; v="${v%%#*}"; fi
+  [[ $n =~ ^[1-8]$ ]] || { warn "Output '$n' is not 1-8; using 1."; n=1; }
+  v="${v#http://}"; v="${v%/}"
+  [[ $v =~ :[0-9]+$ ]] || v="$v:$((11000 + 10 * (n - 1)))"
+  printf 'http://%s' "$v"
+}
+norm_url() { # norm_url "<host or url>" <default port>
+  local v="${1//[[:space:]]/}"; v="${v%/}"
+  [[ $v =~ ^https?:// ]] || v="http://$v"
+  [[ $v =~ ^https?://[^/]+:[0-9]+ ]] || v="${v}:$2"
+  printf '%s' "$v"
+}
+
+# ------------------------------------------------------------------ status / uninstall
+SLOT_KEYS_5A=(MAIN A B C D USB); SLOT_KEYS_3E=(MAIN A B)
+slot_label() { case $1 in MAIN) echo Main ;; USB) echo USB ;; *) echo "Player $1" ;; esac; }
+if (( STATUS )); then
+  printf '%-16s %s / %s\n' "$UNIT" "$(systemctl is-active $UNIT 2>/dev/null || true)" "$(systemctl is-enabled $UNIT 2>/dev/null || true)"
+  printf 'Model %s, hostname %s\n' "$(envget MMS_MODEL)" "$(envget MMS_HOSTNAME)"
+  for k in "${SLOT_KEYS_5A[@]}"; do
+    t="$(envget "MMS_${k}_TYPE")"; [[ -n $t ]] || { t="$([[ -n $(envget "MMS_PLEXAMP_$k") ]] && echo plexamp || echo none)"; }
+    printf '  %-9s %-8s %s\n' "$(slot_label "$k")" "$t" "$(envget "MMS_${k}_URL")"
+  done
+  exit 0
+fi
+if (( UNINSTALL )); then
+  step "Uninstalling"
+  confirm "Stop and remove the $UNIT service?" n || exit 0
+  run sudo systemctl disable --now $UNIT 2>/dev/null || true
+  run sudo rm -f /etc/systemd/system/$UNIT.service
+  run sudo systemctl daemon-reload
+  (( DRY )) || ok "Service removed."
+  if confirm "Also delete the saved settings (.env with your Plex token) and state.json (the Crestron processor link)?" n; then
+    run rm -f "$DIR/.env" "$DIR/state.json"; (( DRY )) || ok "Settings deleted."
+  fi
+  echo "The code in $DIR was left in place; delete the folder to remove it entirely."
+  exit 0
+fi
+
+step "Mirage MMS emulator installer"
+echo "Install folder: $DIR   (service runs as: $RUN_USER)"
+echo "Press Enter to accept the value in [brackets]."
+
+# ------------------------------------------------------------------ prerequisites
+step "Checking prerequisites"
+PKGS=()
+command -v node >/dev/null || PKGS+=(nodejs)
+command -v curl >/dev/null || PKGS+=(curl)
+[[ -x /usr/sbin/avahi-daemon ]] || command -v avahi-daemon >/dev/null || PKGS+=(avahi-daemon)   # the processor resolves this Pi's name via mDNS
+if (( ${#PKGS[@]} )); then
+  warn "Missing packages: ${PKGS[*]}"
+  confirm "Install them with apt now?" y || die "Install ${PKGS[*]} and re-run."
+  run sudo apt-get update -qq
+  run sudo apt-get install -y -qq "${PKGS[@]}"
+fi
+if (( ! DRY )); then
+  NODE_BIN="$(command -v node)"
+  NODE_MAJOR="$("$NODE_BIN" -p 'process.versions.node.split(".")[0]')"
+  (( NODE_MAJOR >= 18 )) || die "Node.js 18 or newer is required (found $("$NODE_BIN" -v)). See https://nodejs.org or use NodeSource."
+  ok "Node $("$NODE_BIN" -v) (no npm packages needed)"
+else NODE_BIN="$(command -v node || echo /usr/bin/node)"; ok "(dry-run) skipping version checks"; fi
+
+# ------------------------------------------------------------------ model + name
+MODEL="${MODEL_OPT:-$(envget MMS_MODEL)}"; MODEL="${MODEL:-5A}"; MODEL="${MODEL^^}"
+if [[ -z $MODEL_OPT && -z $(envget MMS_MODEL) ]] && (( ! YES )); then
+  printf 'Emulate which model? 5A = Main + Player A-D + USB (6 players), 3E = Main + Player A + Player B [5A]: ' >&2; read -r a || true; MODEL="${a:-5A}"; MODEL="${MODEL^^}"
+fi
+case $MODEL in 5A) SLOT_KEYS=("${SLOT_KEYS_5A[@]}") ;; 3E) SLOT_KEYS=("${SLOT_KEYS_3E[@]}") ;; *) die "Model must be 5A or 3E." ;; esac
+HOSTNAME_VAL="${HOST_OPT:-$(envget MMS_HOSTNAME)}"; HOSTNAME_VAL="${HOSTNAME_VAL:-$(hostname)}"
+ok "Model $MODEL, announced as host name \"$HOSTNAME_VAL\" (the Crestron processor must be able to resolve it; mDNS \"$HOSTNAME_VAL.local\" via avahi works)"
+
+# ------------------------------------------------------------------ per-slot choice
+declare -A STYPE SURL
+for k in "${SLOT_KEYS[@]}"; do
+  t="$(envget "MMS_${k}_TYPE")"; u="$(envget "MMS_${k}_URL")"
+  if [[ -z $t && -n $(envget "MMS_PLEXAMP_$k") ]]; then t=plexamp; u="$(envget "MMS_PLEXAMP_$k")"; fi   # older .env spelling
+  STYPE[$k]="${t:-none}"; SURL[$k]="$u"
+done
+for spec in ${SLOT_OPTS[@]+"${SLOT_OPTS[@]}"}; do
+  k="${spec%%=*}"; k="${k^^}"; k="${k#PLAYER}"; k="${k// /}"; v="${spec#*=}"; t="${v%%:*}"; u=""; [[ $v == *:* ]] && u="${v#*:}"
+  [[ " ${SLOT_KEYS[*]} " == *" $k "* ]] || die "Slot '$k' does not exist on a $MODEL (use ${SLOT_KEYS[*]})."
+  case ${t,,} in plexamp|bluos) [[ -n $u ]] || die "--slot $spec needs an address after the type." ;; none) u="" ;; *) die "--slot type must be plexamp, bluos or none (got '$t')." ;; esac
+  STYPE[$k]="${t,,}"; SURL[$k]="$u"
+done
+
+if (( ! YES )) && [[ ${#SLOT_OPTS[@]} -eq 0 ]]; then
+  step "What drives each player?"
+  echo "  Each slot shows up in Crestron Home as its own source. Choose, per slot:"
+  echo "    p = Plexamp / Caldera (your Plex library, played on that Plexamp device's own output)"
+  echo "    b = BluOS player (its sources, inputs, presets and queue)"
+  echo "    n = not used"
+  for k in "${SLOT_KEYS[@]}"; do
+    cur="${STYPE[$k]}"; d=n; [[ $cur == plexamp ]] && d=p; [[ $cur == bluos ]] && d=b
+    while :; do
+      printf '  %-9s [p/b/n] [%s]: ' "$(slot_label "$k")" "$d" >&2; read -r a || true; a="${a:-$d}"; a="${a,,}"
+      case $a in
+        p|plexamp) STYPE[$k]=plexamp; ask_def="${SURL[$k]}"; q="Plexamp/Caldera address (e.g. 192.168.1.105 or 192.168.1.105:32500)"; break ;;
+        b|bluos)   STYPE[$k]=bluos;   ask_def="${SURL[$k]}"; q="BluOS player address (e.g. 192.168.1.50; a multi-output device uses port 11000, 11010, ...)"; break ;;
+        n|none)    STYPE[$k]=none; SURL[$k]=""; q=""; break ;;
+        *) echo "    Please answer p, b or n." >&2 ;;
+      esac
+    done
+    if [[ -n ${q-} ]]; then
+      [[ ${STYPE[$k]} == "${cur}" ]] || ask_def=""
+      while :; do
+        printf '            %s%s: ' "$q" "${ask_def:+ [$ask_def]}" >&2; read -r a || true; a="${a:-$ask_def}"
+        [[ -n $a ]] && { SURL[$k]="$a"; break; }; echo "            An address is required." >&2
+      done
+      if [[ ${STYPE[$k]} == bluos && ${SURL[$k]} != *'#'* && ! ${SURL[$k]} =~ :[0-9]+$ ]]; then
+        printf '            Which output of that device is this? 1 for most; a multi-output device has 2-8 (output N is on port 11000+10*(N-1)) [1]: ' >&2
+        read -r a || true; a="${a:-1}"; SURL[$k]="${SURL[$k]}#$a"
+      fi
+    fi
+    q=""
+  done
+fi
+
+NPLEX=0; NBLU=0; USED=0
+for k in "${SLOT_KEYS[@]}"; do
+  case ${STYPE[$k]} in
+    plexamp) SURL[$k]="$(norm_url "${SURL[$k]}" 32500)"; NPLEX=$((NPLEX+1)); USED=$((USED+1)) ;;
+    bluos)   SURL[$k]="$(bluos_url "${SURL[$k]}")"; NBLU=$((NBLU+1)); USED=$((USED+1)) ;;
+  esac
+done
+(( USED )) || warn "No slot is configured: every player will show \"Not configured\" (you can re-run this later)."
+
+# ------------------------------------------------------------------ Plex server (only if a slot uses Plexamp)
+PLEX_URL="${PLEXURL_OPT:-${PLEX_URL-}}"; PLEX_TOKEN="${PLEX_TOKEN-}"
+if (( NPLEX )); then
+  step "Plex server"
+  [[ -n $PLEX_URL ]] || PLEX_URL="$(envget PLEX_URL)"; [[ -n $PLEX_TOKEN ]] || PLEX_TOKEN="$(envget PLEX_TOKEN)"
+  if (( ! YES )); then
+    [[ -n $PLEXURL_OPT ]] || { printf 'Plex server address (e.g. 192.168.1.22 or 192.168.1.22:32400)%s: ' "${PLEX_URL:+ [$PLEX_URL]}" >&2; read -r a || true; PLEX_URL="${a:-$PLEX_URL}"; }
+    if [[ -z ${PLEX_TOKEN-} || -z $(envget PLEX_TOKEN) ]]; then
+      printf 'Plex token (input hidden): ' >&2; read -r -s a || true; printf '\n' >&2; PLEX_TOKEN="${a:-$PLEX_TOKEN}"
+    else
+      printf 'Plex token (input hidden) [Enter keeps the saved one]: ' >&2; read -r -s a || true; printf '\n' >&2; PLEX_TOKEN="${a:-$PLEX_TOKEN}"
+    fi
+  fi
+  [[ -n $PLEX_URL && -n $PLEX_TOKEN ]] || die "A Plex address and token are required for Plexamp slots (set PLEX_URL / PLEX_TOKEN with --yes)."
+  PLEX_URL="$(norm_url "$PLEX_URL" 32400)"
+fi
+
+# ------------------------------------------------------------------ validate
+step "Checking the players"
+PROBLEMS=0
+if (( NPLEX )); then
+  curl_plex() { printf 'header = "X-Plex-Token: %s"\n' "$PLEX_TOKEN" | curl -sS -m 10 -K - "$@"; }
+  out="$(curl -sS -m 8 "$PLEX_URL/identity" 2>&1 || true)"
+  if [[ $out == *machineIdentifier* ]]; then
+    ok "Plex server reachable at $PLEX_URL"
+    code="$(curl_plex -o /dev/null -w '%{http_code}' "$PLEX_URL/library/sections" 2>/dev/null || true)"
+    if [[ $code == 200 ]]; then
+      ok "Plex token accepted"
+      secs="$(curl_plex -H 'Accept: application/json' "$PLEX_URL/library/sections" 2>/dev/null || true)"
+      [[ $secs == *'"type":"artist"'* ]] && ok "Music library found" || warn "No music library found on that Plex server (browsing will be empty)"
+    else warn "Plex rejected the token (HTTP ${code:-none}) - see https://support.plex.tv/articles/204059436"; PROBLEMS=1; fi
+  else warn "No Plex server answered at $PLEX_URL"; PROBLEMS=1; fi
+fi
+for k in "${SLOT_KEYS[@]}"; do
+  case ${STYPE[$k]} in
+    plexamp) # any Plex Companion player (Plexamp, Caldera Music, ...) answers /resources with a protocol="plex" player
+      out="$(curl -sS -m 8 "${SURL[$k]}/resources" 2>&1 || true)"
+      if [[ $out == *'<Player '* && $out == *'protocol="plex"'* ]]; then
+        prod="$(printf '%s' "$out" | grep -o 'product="[^"]*"' | head -1 | cut -d'"' -f2)"
+        ok "$(slot_label "$k"): ${prod:-Plexamp-compatible player} reachable at ${SURL[$k]}"
+      else warn "$(slot_label "$k"): no Plexamp (or Caldera) player answered at ${SURL[$k]} (is headless Plexamp/Caldera running? default port 32500)"; PROBLEMS=1; fi ;;
+    bluos)
+      out="$(curl -sS -m 8 "${SURL[$k]}/SyncStatus" 2>&1 || true)"
+      if [[ $out == *SyncStatus* ]]; then
+        pname="$(printf '%s' "$out" | grep -o ' name="[^"]*"' | head -1 | sed 's/^ name="//; s/"$//' || true)"
+        ok "$(slot_label "$k"): BluOS player${pname:+ \"$pname\"} reachable at ${SURL[$k]}"
+      else warn "$(slot_label "$k"): no BluOS player answered at ${SURL[$k]}/SyncStatus"; PROBLEMS=1; fi ;;
+  esac
+done
+(( USED )) || ok "Nothing to check"
+if (( PROBLEMS )); then confirm "Problems were found. Continue anyway?" n || die "Fix the problems above and re-run ./install.sh (your answers are not saved yet)."; fi
+
+# ------------------------------------------------------------------ install
+step "Installing"
+if (( DRY )); then
+  echo "  [dry-run] would write .env (mode 600):"
+  echo "    MMS_MODEL=$MODEL MMS_HOSTNAME=$HOSTNAME_VAL"
+  (( NPLEX )) && echo "    PLEX_URL=$PLEX_URL PLEX_TOKEN=(hidden)"
+  for k in "${SLOT_KEYS[@]}"; do [[ ${STYPE[$k]} == none ]] || echo "    MMS_${k}_TYPE=${STYPE[$k]} MMS_${k}_URL=${SURL[$k]}"; done
+else
+  # keep any setting this installer does not manage (e.g. MMS_DEMO, MMS_ADVERTISE_IP)
+  KEEP=""; [[ -f .env ]] && KEEP="$(grep -Ev '^(PLEX_URL|PLEX_TOKEN|MMS_MODEL|MMS_HOSTNAME|MMS_PLEXAMP_[A-D]|MMS_(MAIN|A|B|C|D|USB)_(TYPE|URL))=' .env || true)"
+  {
+    printf 'MMS_MODEL=%s\nMMS_HOSTNAME=%s\n' "$MODEL" "$HOSTNAME_VAL"
+    (( NPLEX )) && printf 'PLEX_URL=%s\nPLEX_TOKEN=%s\n' "$PLEX_URL" "$PLEX_TOKEN"
+    for k in "${SLOT_KEYS[@]}"; do [[ ${STYPE[$k]} == none ]] || printf 'MMS_%s_TYPE=%s\nMMS_%s_URL=%s\n' "$k" "${STYPE[$k]}" "$k" "${SURL[$k]}"; done
+    [[ -z $KEEP ]] || printf '%s\n' "$KEEP"
+  } > .env.new
+  chmod 600 .env.new; mv .env.new .env
+  ok "Saved settings to $DIR/.env (readable only by $RUN_USER)"
+fi
+
+if (( DRY )); then echo "  [dry-run] would install /etc/systemd/system/$UNIT.service"
+else
+  sed -e "s|@USER@|$RUN_USER|g" -e "s|@DIR@|$DIR|g" -e "s|@NODE@|$NODE_BIN|g" systemd/$UNIT.service.in | sudo tee /etc/systemd/system/$UNIT.service >/dev/null
+fi
+run sudo systemctl daemon-reload
+run sudo systemctl enable $UNIT >/dev/null 2>&1
+run sudo systemctl restart $UNIT
+(( DRY )) || ok "Service installed (starts on boot and restarts if it crashes)"
+
+# ------------------------------------------------------------------ verify
+if (( ! DRY )); then
+  step "Verifying"
+  sleep 5
+  if systemctl is-active --quiet $UNIT; then
+    ok "$UNIT is running"
+    jl="$(sudo journalctl -u $UNIT --since "-1min" --no-pager -o cat 2>/dev/null || true)"
+    if [[ $jl == *'init failed'* ]]; then warn "A player could not be reached at startup - check: sudo journalctl -u $UNIT -n 50"; fi
+  else warn "$UNIT is NOT running - see: sudo journalctl -u $UNIT -n 50"; fi
+fi
+
+step "Done"
+cat <<EOF
+Next steps:
+  * In Crestron Home setup: Crestron Wired and Wi-Fi > Ethernet and Wi-Fi > scan; the MMS appears as "$HOSTNAME_VAL". Add it,
+    then assign each player's output to an amplifier. After a restart allow about 2 minutes for the app to re-register the players.
+  * Power off or remove any real Mirage MMS first.
+Useful commands:
+  ./install.sh --status                       show the service and what drives each slot
+  ./install.sh --slot B=bluos:192.168.1.50    change one slot (others keep their saved settings)
+  ./install.sh --slot C=none                  stop using a slot
+  sudo journalctl -u $UNIT -f                 live log
+  ./install.sh --uninstall                    remove the service
+EOF
