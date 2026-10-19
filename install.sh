@@ -150,7 +150,7 @@ if (( ! YES )) && [[ ${#SLOT_OPTS[@]} -eq 0 ]]; then
       printf '  %-9s [p/b/n] [%s]: ' "$(slot_label "$k")" "$d" >&2; read -r a || true; a="${a:-$d}"; a="${a,,}"
       case $a in
         p|plexamp) STYPE[$k]=plexamp; ask_def="${SURL[$k]}"; q="Plexamp/Caldera address (e.g. 192.168.1.105 or 192.168.1.105:32500)"; break ;;
-        b|bluos)   STYPE[$k]=bluos;   ask_def="${SURL[$k]}"; q="BluOS player address (e.g. 192.168.1.50; a multi-output device uses port 11000, 11010, ...)"; break ;;
+        b|bluos)   STYPE[$k]=bluos;   ask_def="${SURL[$k]}"; q="BluOS player IP address (e.g. 192.168.1.50; the output is asked next)"; break ;;
         n|none)    STYPE[$k]=none; SURL[$k]=""; q=""; break ;;
         *) echo "    Please answer p, b or n." >&2 ;;
       esac
