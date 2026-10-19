@@ -163,13 +163,19 @@ function createBluosBackend({ playerUrl, name = 'MMS', log, pollMs = 1000, skipW
     else if (playUrl) it.play = act(playUrl);
     else it.play = () => {};
     if (a.contextMenuKey || playUrl) it.context = async () => {
-      const entries = [];
+      const entries = []; let addLast = '';
       if (playUrl) entries.push(['Play now', act(playUrl)]);
       if (a.contextMenuKey) {
-        try { for (const c of elements(await get(key(a.contextMenuKey)), 'item')) if (c.a.actionURL && c.a.text) entries.push([c.a.text, act(c.a.actionURL)]); }
-        catch (e) { log(`[bluos ${name}] context menu: ${e.message}`); }
+        try {
+          for (const c of elements(await get(key(a.contextMenuKey)), 'item')) if (c.a.actionURL && c.a.text) {
+            entries.push([c.a.text, act(c.a.actionURL)]);
+            if (!addLast && /^(addAll|add)-last$/.test(c.a.type || '')) addLast = c.a.actionURL;   // the plus button = add to the end of the queue
+          }
+        } catch (e) { log(`[bluos ${name}] context menu: ${e.message}`); }
       }
-      return choose(a.text || 'Options', ...(entries.length ? entries : [['Nothing to do', () => {}]]));
+      const node = choose(a.text || 'Options', ...(entries.length ? entries : [['Nothing to do', () => {}]]));
+      if (addLast) { node.functions = ['QuickList', 'Favorites', 'Create', 'BackToTop']; node.create = act(addLast); }
+      return node;
     };
     return it;
   };

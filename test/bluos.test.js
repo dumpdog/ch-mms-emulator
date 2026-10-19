@@ -35,7 +35,7 @@ function mock() {
       if (k === '/Albums?service=LocalMusic') return send('<browse nextKey="/Albums?service=LocalMusic&amp;start=2"><item text="First Album" text2="Artist One" image="/Artwork?album=1" browseKey="/Songs?album=1" playURL="/Add?album=1&amp;playnow=1" contextMenuKey="ctx1" type="album"/><item text="Second Album" text2="Artist Two" type="album" browseKey="/Songs?album=2"/></browse>');
       if (k === '/Albums?service=LocalMusic&start=2') return send('<browse><category text="More"><item text="Third Album" text2="Artist Three" type="album" playURL="/Add?album=3&amp;playnow=1"/></category></browse>');
       if (k === '/Songs?album=1') return send('<browse><item text="Track A" text2="Artist One" type="track" autoplayURL="/Add?track=a&amp;playnow=1&amp;auto=1" playURL="/Add?track=a&amp;playnow=1"/></browse>');
-      if (k === 'ctx1') return send('<browse type="contextMenu"><item text="Add next" type="addAll-next" actionURL="/Add?album=1&amp;playnow=-1&amp;where=nextAlbum"/></browse>');
+      if (k === 'ctx1') return send('<browse type="contextMenu"><item text="Add next" type="addAll-next" actionURL="/Add?album=1&amp;playnow=-1&amp;where=nextAlbum"/><item text="Add last" type="addAll-last" actionURL="/Add?album=1&amp;playnow=-1&amp;where=last"/></browse>');
       return send('<error><message>unknown key</message></error>');
     }
     if (p === '/Presets') return send('<presets prid="3"><preset id="6" name="Serenity" url="x" image="https://img.example/6.jpg"/></presets>');
@@ -68,7 +68,10 @@ test('bluos: browse, play, state, transport, favorites, queue', async t => {
   assert.ok(m.calls.some(c => c.startsWith('/Add?album=3&playnow=1')));
 
   assert.strictEqual(await menu.pressAndHold(1), 'navigated');                        // context: Play now + the player's own actions
-  assert.deepStrictEqual((await menu.data(1, 10)).map(r => r.L1), ['Play now', 'Add next']);
+  assert.deepStrictEqual((await menu.data(1, 10)).map(r => r.L1), ['Play now', 'Add next', 'Add last']);
+  assert.deepStrictEqual(menu.props.ListSpecificFunctions, ['QuickList', 'Favorites', 'Create', 'BackToTop']);
+  assert.strictEqual(await menu.create(), true);                                      // plus button = add last
+  assert.ok(m.calls.some(c => c.startsWith('/Add?album=1&playnow=-1&where=last')));
   assert.strictEqual(await menu.select(2), 'played');
   assert.ok(m.calls.some(c => c.startsWith('/Add?album=1&playnow=-1')));
   menu.back(); await menu.select(1);                                                  // First Album -> tracks
