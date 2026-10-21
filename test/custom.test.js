@@ -59,3 +59,22 @@ test('custom: one CIP client per processor/IP-ID, only its own slots published, 
   assert.ok(!p1.got.serials.has(42) && !p2.got.serials.has(40) && !p2.got.serials.has(41), 'slots stay with their own processor');
   assert.ok(![43, 44, 45].some(j => p1.got.serials.has(j) || p2.got.serials.has(j)), 'slots with no master are not published');
 });
+
+test('smart graphics: Find is offered, searches and lands on a results list', async t => {
+  const { Slot } = require('../slot');
+  const slot = new Slot({ index: 1, name: 'Main', backend: createDemoBackend(), port: 0, advertise: () => ({ ip: '127.0.0.1', httpHost: '127.0.0.1' }), log: () => {} });
+  await slot.start(); t.after(() => slot.stop());
+  const call = async (method, params = {}) => (await slot._dispatch({ method, params, id: 1 })).result;
+  const prop = async n => (await call('MirageMediaMenu1.GetProperty', { propName: n }))[n];
+
+  assert.ok(!(await prop('ListSpecificFunctions')).includes('Find'), 'Crestron Home clients never see Find');
+  await call('Crpc.Register', { name: 'Smart Graphics=abc' });
+  assert.deepStrictEqual((await prop('ListSpecificFunctions'))[0], 'Find');
+  assert.deepStrictEqual([await prop('FindAvailable'), await prop('FindSupported')], [true, ['Text']]);
+
+  assert.strictEqual(await call('MirageMediaMenu1.Find', { query: 'piano' }), 1);
+  assert.strictEqual(await prop('Title'), 'Search: piano');
+  assert.strictEqual(await prop('FindDesired'), 'piano');
+  assert.deepStrictEqual((await call('MirageMediaMenu1.GetData', { item: 1, count: 5 })).map(r => r.L1), ['Quiet Piano']);
+  assert.strictEqual(await call('MirageMediaMenu1.Search'), true);
+});

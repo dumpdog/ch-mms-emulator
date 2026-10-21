@@ -245,8 +245,25 @@ function createPlexBackend({ plexUrl, token, plexampUrl, name = 'MMS', log, poll
     })) };
   }
 
+  // Search (Smart Graphics "Find"): artists, albums and tracks matching the text, each opening/playing like in the normal lists
+  async function search(query) {
+    await init();
+    const q = String(query || '').trim();
+    if (!q) return placeholder('Search', 'Type something to search for');
+    const r = await plex(`/hubs/search?query=${encodeURIComponent(q)}&sectionId=${section}&limit=12&includeCollections=0`);
+    const rows = [];
+    for (const hub of (r.MediaContainer || {}).Hub || []) {
+      for (const m of hub.Metadata || []) {
+        if (hub.type === 'artist') rows.push({ ...artistItem(m), l2: 'Artist' });
+        else if (hub.type === 'album') rows.push({ ...albumItem(m), l2: `Album - ${m.parentTitle || ''}` });
+        else if (hub.type === 'track') rows.push({ ...songItem(m), l2: `Song - ${m.grandparentTitle || ''}` });
+      }
+    }
+    return rows.length ? { title: `Search: ${q}`, items: rows } : placeholder(`Search: ${q}`, 'No results');
+  }
+
   return {
-    providerName: 'Plex', favorites, quickList,
+    providerName: 'Plex', favorites, quickList, search,
     async home() { await init(); return { title: 'Home Menu', items: [{ l1: 'My Music', open: myMusic }] }; },
     player,
     async art(guid) {

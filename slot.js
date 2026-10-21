@@ -156,7 +156,13 @@ class Slot extends EventEmitter {
 
   _menuProps() {
     return { MaxReqItems: 100, StatusMsgMenu: null, Title: this.menu.props.Title, ItemCnt: this.menu.props.ItemCnt,
-      ListItemIcons: false, ...(this.sg ? { Subtitle: this.menu.props.Title, TransactionId: this.txn || 0, IsMenuAvailable: true } : {}), ListSpecificFunctions: this.menu.props.ListSpecificFunctions, Level: this.menu.props.Level };
+      ListItemIcons: false, ...(this.sg ? { Subtitle: this.menu.props.Title, TransactionId: this.txn || 0, IsMenuAvailable: true, ...this._findProps() } : {}),
+      ListSpecificFunctions: this.sg && this.backend.search && !this.menu.props.ListSpecificFunctions.includes('Find') ? ['Find', ...this.menu.props.ListSpecificFunctions] : this.menu.props.ListSpecificFunctions, Level: this.menu.props.Level };
+  }
+  // Smart Graphics panels (Crestron Custom) can search; Crestron Home ignores Find. Property semantics are inferred from Crestron's client library.
+  _findProps() {
+    const can = !!this.backend.search;
+    return { FindSupported: can ? ['Text'] : [], FindAvailable: can, FindDesired: this.findText || '' };
   }
 
   async _menu(m, params) {
@@ -185,6 +191,16 @@ class Slot extends EventEmitter {
         setTimeout(() => this._announceMenu(), 20);
         return true;
       }
+      case 'Find': {
+        const query = params.query ?? params.text ?? params.value ?? '';
+        if (!this.backend.search) { this.log(`${this.svc}: Find not implemented by backend`); return 0; }
+        this.findText = String(query);
+        this._busy(true);
+        try { await menu.goto(await this.backend.search(query)); } finally { this._busy(false); }
+        setTimeout(() => this._announceMenu(), 20);
+        return menu.props.ItemCnt;
+      }
+      case 'Search': this.log(`${this.svc}: Search ${JSON.stringify(params)}`); return true;   // no query yet: the panel follows up with Find
       case 'Create': if (!menu.top.node.create) { this.log(`${this.svc}: menu Create here has nothing to do`); return false; } return menu.create();
       case 'Advanced': case 'PlayAll': this.log(`${this.svc}: menu ${m} not implemented`); return false;
       case 'Back': { const ok = menu.back(); if (ok) setTimeout(() => this._announceMenu(), 20); return ok; }

@@ -63,7 +63,11 @@ function createDemoBackend() {
       { l1: 'Songs', open: () => ({ title: 'Titles', items: songItems() }) },
     ] }) },
   ] });
-  return { providerName: 'Local Music', home, player };
+  const search = async query => {
+    const q = String(query || '').toLowerCase(), hits = songItems().filter(i => i.l1.toLowerCase().includes(q));
+    return { title: `Search: ${query}`, items: hits.length ? hits : [{ l1: 'No results', play: () => {} }] };
+  };
+  return { providerName: 'Local Music', home, player, search };
 }
 
 module.exports = { createDemoBackend };

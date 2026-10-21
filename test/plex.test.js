@@ -34,6 +34,7 @@ function mock() {
     if (p === '/library/sections/7/all') return slice(u.searchParams.has('userRating>>') ? LIKED : []);
     if (p === '/library/metadata/10/children') return slice(TRACKS);
     if (p === '/library/metadata/100' || p === '/library/metadata/101') return json({ Metadata: [TRACKS.find(t => t.key === p)] });
+    if (p === '/hubs/search') return json({ Hub: [{ type: 'album', Metadata: [ALBUMS[0]] }, { type: 'track', Metadata: [TRACKS[1]] }] });
     if (p === '/playQueues' && req.method === 'POST') return json({ playQueueID: 55, playQueueTotalCount: 2, Metadata: TRACKS });
     if (p === '/playQueues/55') return json({ playQueueSelectedItemOffset: 1, playQueueTotalCount: 2, Metadata: TRACKS.map((tr, i) => ({ ...tr, playQueueItemID: 9 + i })) });
     if (p === '/playQueues/55' && req.method === 'PUT') return json({});
@@ -127,6 +128,15 @@ test('browse albums, play a track, track state, thumbs', async t => {
   await wait(() => m.calls.some(c => c.startsWith('PUT /playQueues/55') && c.includes('next=0')));
   await wait(() => m.calls.some(c => c.includes('/player/playback/refreshPlayQueue') && c.includes('playQueueID=55')));
   assert.strictEqual(await qmenu.create(), false, 'no plus action on a plain list');
+
+  // search (Smart Graphics Find): albums and tracks matching the text
+  const smenu = await new Menu(await be.home()).init(); await smenu.goto(await be.search('track'));
+  assert.strictEqual(smenu.props.Title, 'Search: track');
+  assert.deepStrictEqual((await smenu.data(1, 10)).map(r => [r.L1, r.L2]), [['First Album', 'Album - Artist One'], ['Track B', 'Song - Artist One']]);
+  assert.ok(m.calls.some(c => c.startsWith('GET /hubs/search') && c.includes('query=track') && c.includes('sectionId=7')));
+  assert.strictEqual(await smenu.select(1), 'navigated');                             // an album result opens its tracks
+  assert.deepStrictEqual((await smenu.data(1, 10)).map(r => r.L1), ['Track A', 'Track B']);
+  assert.strictEqual((await be.search('  ')).items[0].l1, 'Type something to search for');
 
   const art = await be.art(first.art).catch(() => null);                               // mock has no photo transcode: must not throw out of the handler
   assert.ok(art === null || art.body);
