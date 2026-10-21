@@ -30,6 +30,8 @@ function mock() {
     if (p === '/identity') return json({ machineIdentifier: 'SERVER1' });
     if (p === '/resources') return res.end('<MediaContainer><Player machineIdentifier="AMP1"/></MediaContainer>');
     if (p === '/library/sections') return json({ Directory: [{ key: '7', type: 'artist' }] });
+    if (p === '/library/sections/7/firstCharacter') return json({ Directory: [{ key: 'f', title: 'F', size: '1' }, { key: 's', title: 'S', size: '1' }] });
+    if (p === '/library/sections/7/firstCharacter/s') return slice(ALBUMS.slice(1));
     if (p === '/library/sections/7/albums') return slice(ALBUMS);
     if (p === '/library/sections/7/all') return slice(u.searchParams.has('userRating>>') ? LIKED : []);
     if (p === '/library/metadata/10/children') return slice(TRACKS);
@@ -55,7 +57,7 @@ test('browse albums, play a track, track state, thumbs', async t => {
   const menu = await new Menu(await be.home()).init();
   assert.strictEqual(menu.props.Title, 'Home Menu');
   await menu.select(1);                                                               // My Music
-  assert.deepStrictEqual((await menu.data(1, 10)).map(r => r.L1), ['Playlists', 'Albums', 'Artists', 'Recently Added', 'Recently Played', 'Songs']);
+  assert.deepStrictEqual((await menu.data(1, 10)).map(r => r.L1), ['Playlists', 'Albums', 'Artists', 'Recently Added', 'Recently Played', 'Songs', 'Search']);
   await menu.select(2);                                                               // Albums
   assert.strictEqual(menu.props.ItemCnt, 2);
   const albums = await menu.data(1, 100);
@@ -140,4 +142,20 @@ test('browse albums, play a track, track state, thumbs', async t => {
 
   const art = await be.art(first.art).catch(() => null);                               // mock has no photo transcode: must not throw out of the handler
   assert.ok(art === null || art.body);
+});
+
+test('search by letter: kind -> letter index -> items', async t => {
+  const m = await mock(); t.after(() => m.close());
+  const be = createPlexBackend({ plexUrl: m.url, token: 'SECRET', plexampUrl: m.url, name: 'Player A', log: () => {}, pollMs: 50 });
+  t.after(() => be.close());
+  const menu = await new Menu(await be.home()).init();
+  await menu.select(1);                                                               // My Music
+  await menu.select(7);                                                               // Search
+  assert.deepStrictEqual((await menu.data(1, 10)).map(r => r.L1), ['Artists by letter', 'Albums by letter', 'Songs by letter']);
+  await menu.select(2);                                                               // Albums by letter
+  assert.deepStrictEqual((await menu.data(1, 10)).map(r => [r.L1, r.L2]), [['F', '1 item'], ['S', '1 item']]);
+  await menu.select(2);                                                               // S
+  assert.deepStrictEqual((await menu.data(1, 10)).map(r => r.L1), ['Second Album']);
+  assert.ok(m.calls.some(c => c.startsWith('GET /library/sections/7/firstCharacter/s?') && c.includes('type=9')));
+  assert.strictEqual(menu.props.Title, 'Albums: S');
 });

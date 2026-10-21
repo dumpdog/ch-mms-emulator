@@ -218,7 +218,23 @@ function createPlexBackend({ plexUrl, token, plexampUrl, name = 'MMS', log, poll
     { l1: 'Recently Added', open: () => paged('Recently Added', lib('albums?sort=addedAt:desc'), albumItem, 100) },
     { l1: 'Recently Played', open: () => paged('Recently Played', lib('albums?sort=lastViewedAt:desc'), albumItem, 100) },
     { l1: 'Songs', open: () => paged('Titles', lib('all?type=10&sort=titleSort'), songItem) },
+    { l1: 'Search', open: () => searchMenu() },
   ] });
+
+  // Crestron Home has no text entry, so "search" is a first-letter jump: kind -> letter -> matching items.
+  // Plex's firstCharacter index lists the letters that exist (with counts); if it is unavailable, offer # and A-Z.
+  const SEARCH_KINDS = [['Artists', 8, artistItem], ['Albums', 9, albumItem], ['Songs', 10, songItem]];
+  const searchMenu = () => ({ title: 'Search', items: SEARCH_KINDS.map(([l1, type, mk]) => ({ l1: `${l1} by letter`, open: () => lettersMenu(l1, type, mk) })) });
+  async function lettersMenu(kind, type, mk) {
+    let letters = [];
+    try { letters = ((await plex(lib(`firstCharacter?type=${type}`))).MediaContainer.Directory || []).filter(d => d.key).map(d => ({ key: d.key, title: d.title || d.key.toUpperCase(), size: Number(d.size) || 0 })); }
+    catch (e) { log(`[plex ${name}] firstCharacter index failed: ${e.message}`); }
+    if (!letters.length) letters = [...'#ABCDEFGHIJKLMNOPQRSTUVWXYZ'].map(c => ({ key: c.toLowerCase(), title: c, size: 0 }));
+    return { title: `${kind} by letter`, items: letters.map(l => ({
+      l1: l.title, l2: l.size ? `${l.size} ${l.size === 1 ? 'item' : 'items'}` : '',
+      open: () => paged(`${kind}: ${l.title}`, lib(`firstCharacter/${encodeURIComponent(l.key)}?type=${type}&sort=titleSort`), mk),
+    })) };
+  }
 
   // Favorites button: tracks rated thumbs-up (8+). QuickList button: the current play queue ("up next"), jump on select.
   const placeholder = (title, text) => ({ title, items: [{ l1: text, play: () => {} }] });
