@@ -7,7 +7,7 @@ Status: Plexamp/Caldera backend live-tested; BluOS backend (`backend-bluos.js`, 
 
 Install on a Pi (Raspberry Pi OS; needs git):
 ```
-git clone https://github.com/justinlummm/mirage-mms-emulator.git && cd mirage-mms-emulator   # private repo: needs GitHub auth on the Pi
+git clone https://github.com/dumpdog/mirage-mms-emulator.git && cd mirage-mms-emulator   # private repo: needs GitHub auth on the Pi
 ./install.sh
 ```
 The installer asks per slot: Plexamp/Caldera, BluOS (and which output) or unused, then the address; it checks each, installs a systemd service and starts it.
