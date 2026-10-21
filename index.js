@@ -6,12 +6,15 @@
 //   MMS_PLEXAMP_A..D                     older spelling of MMS_<A..D>_TYPE=plexamp + MMS_<A..D>_URL
 //   MMS_DEMO=1                           fake library on unconfigured slots instead
 //   MMS_HOSTNAME (default os.hostname(); must be resolvable by the processor, e.g. via avahi), MMS_MODEL (5A|3E),
+//   Crestron Custom (SIMPL) instead of Crestron Home: MMS_SYSTEM=custom, MMS_MASTER=<processor ip>[:port]@<IP-ID hex> (default for every slot),
+//   MMS_<SLOT>_MASTER=... overrides it per slot; slots sharing a processor and IP-ID share one connection. No discovery or console is started.
 //   MMS_HTTP_PORT (default 80), MMS_STATE_FILE (default ./state.json), MMS_ADVERTISE_IP
 
 const os = require('os');
 const path = require('path');
 const EventEmitter = require('events');
-const { startEmulator } = require('./emulator');
+const { startEmulator, MODELS } = require('./emulator');
+const { parseMasters } = require('./masters');
 const { createDemoBackend } = require('./backend-demo');
 const { createPlexBackend } = require('./backend-plex');
 const { createBluosBackend } = require('./backend-bluos');
@@ -39,5 +42,6 @@ startEmulator({
   discoveryPort: 41794, consolePort: 5004, directBase: 41798,
   httpPort: parseInt(env.MMS_HTTP_PORT || '80', 10),
   stateFile: env.MMS_STATE_FILE || path.join(__dirname, 'state.json'),
+  masters: env.MMS_SYSTEM === 'custom' ? parseMasters(env, MODELS[env.MMS_MODEL || '5A'].map(slotKey)) : undefined,
   createBackend, log,
 }).catch(e => { console.error(e); process.exit(1); });

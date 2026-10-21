@@ -4,3 +4,4 @@ node_modules/
 .env.bak
 state.json
 *.log
+state-probe.json

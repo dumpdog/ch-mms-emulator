@@ -7,7 +7,7 @@ Status: Plexamp/Caldera backend live-tested; BluOS backend (`backend-bluos.js`, 
 
 Install on a Pi (Raspberry Pi OS; needs git):
 ```
-git clone https://github.com/justinlummm/mirage-mms-emulator.git && cd mirage-mms-emulator   # private repo: needs GitHub auth on the Pi
+git clone https://github.com/dumpdog/mirage-mms-emulator.git && cd mirage-mms-emulator   # private repo: needs GitHub auth on the Pi
 ./install.sh
 ```
 The installer asks per slot: Plexamp/Caldera, BluOS (and which output) or unused, then the address; it checks each, installs a systemd service and starts it.
@@ -24,6 +24,21 @@ Run: `MMS_HOSTNAME=<resolvable name> node index.js` (port 80 needs root on Linux
 Do not run it while the real MMS is on the network (same discovery/ports). The processor learns the master from the console,
 persisted in `state.json`.
 Test: `npm test` (mock processor replaying the captured sequence).
+
+## Crestron Custom (SIMPL / Studio)
+
+Run `./install.sh` and choose system 2, or set `MMS_SYSTEM=custom` in .env. There is no discovery or console: the emulator dials each processor's CIP port (41794)
+and registers as the IP-ID of your program's Autonomic MMS-5A symbol (the one from Autonomic's sample program: MMS symbol + Ethernet Offline Manager + one
+Media Object Router per touch panel).
+
+    MMS_SYSTEM=custom
+    MMS_MASTER=192.168.4.5@0A          # processor IP[:port]@IP-ID (hex), default for every slot
+    MMS_B_MASTER=192.168.4.6@0B        # optional per-slot override (MAIN, A, B, C, D, USB)
+
+Slots with the same processor and IP-ID share one connection (one symbol); different pairs get their own. The join layout matches Crestron Home
+(CRPC 1-6, Config 11+n, DirectConnectInfo 40+n); override with MMS_CONFIG_BASE / MMS_DIRECT_BASE if your program differs. Touch panels use Smart Graphics
+(chunked CRPC, extra menu properties, a ListChanged event); the emulator detects them from their Crpc.Register name. In SIMPL, run Project > GUI Extender
+Management > Select All > Sync > Commit or the panel Media Player area spins forever. MMS_CIP_TRACE=1 logs raw CIP and CRPC traffic.
 
 ## TODO / to investigate
 - FF / rewind: Crestron Home sends ONE `Ffwd` call per tap or hold (no release, no repeat); `Rewind` is only sent when `Rewind` is in `ActionsAvailable`. Implemented as a skip that grows on repeated presses in the same direction within 2 s: 15, 20, 25, 30 s (see SKIP_STEPS in backend-plex.js). A true scan mode (FfwdSpeed/RewindSpeed, joins 104/105) was not attempted; revisit only if wanted.

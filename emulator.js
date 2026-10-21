@@ -17,7 +17,7 @@ const { Slot } = require('./slot');
 const MODELS = { '3E': ['Main', 'Player A', 'Player B'], '5A': ['Main', 'Player A', 'Player B', 'Player C', 'Player D', 'USB'] };
 const NIL_GUID = '00000000-0000-0000-0000-000000000000';
 const PNG_1PX = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
-const J = { CRPC: 1, CONFIG: 11, DIRECT: 40, ART: 130, PLAY: 101 };   // base joins; per-slot offsets: +n, +n, +n, +100n, +100n
+const J = { CRPC: 1, CONFIG: parseInt(process.env.MMS_CONFIG_BASE || '11', 10), DIRECT: parseInt(process.env.MMS_DIRECT_BASE || '40', 10), ART: 130, PLAY: 101 };   // base joins; per-slot offsets: +n, +n, +n, +100n, +100n
 
 // processor -> MMS button joins, offset from 101+100n: play, pause, (stopped fb only), rewind, ff, track+, track-
 const DIGITAL_INPUTS = { 0: 'play', 1: 'pause', 5: 'next', 6: 'prev' };
@@ -36,18 +36,20 @@ async function startEmulator(cfg) {
   const description = `AUTONOMIC-MMS-${cfg.model} [v6.8.20260224.2 (Feb 25 2026), *01000000${serverId}]`;
   const licenseSerial = cfg.licenseSerial || crypto.createHash('sha1').update('lic' + hostname).digest('hex').replace(/^(.{8})(.{4})(.{4})(.{4})(.{12}).*$/, '$1-$2-$3-$4-$5');
 
-  let master = null, cip = null, cipSock = null, retry = null, advertisedIp = cfg.advertiseIp || null;
+  let master = null, advertisedIp = cfg.advertiseIp || null;
+  const slotIp = {};   // slot index -> our local address toward the processor that owns it (Custom can have several processors on different subnets)
   let httpPort = cfg.httpPort;
-  const advertise = () => {
-    const ip = advertisedIp || localIp();
+  const advertiseFor = n => {
+    const ip = cfg.advertiseIp || slotIp[n] || advertisedIp || localIp();
     return { ip, httpHost: httpPort === 80 ? ip : `${ip}:${httpPort}` };
   };
+  const advertise = () => advertiseFor(-1);
 
   // ---- slots
   const slots = [];
   for (let n = 0; n < names.length; n++) {
     const backend = cfg.createBackend(names[n], n);
-    const slot = new Slot({ index: n + 1, name: names[n], backend, port: cfg.directBase ? cfg.directBase + n : 0, advertise, log });
+    const slot = new Slot({ index: n + 1, name: names[n], backend, port: cfg.directBase ? cfg.directBase + n : 0, advertise: () => advertiseFor(n), log });
     await slot.start();
     slot.port = slot.server.address().port;
     slot.cur = { name: 'None', idx: 0 };
@@ -69,37 +71,42 @@ async function startEmulator(cfg) {
   await new Promise((resolve, reject) => { httpd.once('error', reject); httpd.listen(httpPort, () => resolve()); });
   httpPort = httpd.address().port;
 
-  // ---- CIP client (outbound to the processor)
-  const send = buf => cipSock && !cipSock.destroyed && cipSock.write(buf);
-  const ser = (join, text) => send(serialFrame(join, text));
-  const dig = (join, v) => send(digitalFrame(join, v));
+  // ---- CIP clients (outbound to the processor). Crestron Home: one master, learned from the console `addmaster`.
+  // Crestron Custom: static masters from cfg.masters ({ host, port, ipid, slots: [slot indexes] }), one client per distinct (processor, IP-ID).
+  const clients = new Map();   // "host:port:ipid" -> { m, slots, sock, retry, readers }
+  const send = (c, buf) => c.sock && !c.sock.destroyed && c.sock.write(buf);
+  const ser = (c, join, text) => send(c, serialFrame(join, text));
+  const dig = (c, join, v) => send(c, digitalFrame(join, v));
 
   const providers = () => `[Providers,1||My Music,MyMusic,http://${advertise().httpHost}/getart?guid=${NIL_GUID}&h=500&w=500&c=1&fmt=png&ext=.png,1]`;
   const currentProvider = s => `[CurrentProvider||${s.cur.name},${s.cur.idx}]`;
 
-  function publishAll() {
-    const { ip } = advertise();
-    slots.forEach((s, n) => {
-      ser(J.DIRECT + n, JSON.stringify({ ip: [`${ip}:${s.port}`] }));
-      ser(J.CONFIG + n, currentProvider(s));
-      ser(J.ART + 100 * n, s.p.AlbumArtUrl);
-      ser(J.CONFIG + n, 'Ready');
-      dig(J.PLAY + 100 * n, false); dig(J.PLAY + 100 * n + 1, false); dig(J.PLAY + 100 * n + 2, true);
+  function publishAll(c) {
+    c.slots.forEach(n => {
+      const s = slots[n], { ip } = advertiseFor(n);
+      ser(c, J.DIRECT + n, JSON.stringify({ ip: [`${ip}:${s.port}`] }));
+      if (n === 0 && process.env.MMS_DIRECT_SPRAY) for (let j = 36; j <= 50; j++) ser(c, j, JSON.stringify({ ip: [`${ip}:${s.port}`] }));   // test only: which join is Main's DirectConnectInfo in a Custom program
+      ser(c, J.CONFIG + n, currentProvider(s));
+      ser(c, J.ART + 100 * n, s.p.AlbumArtUrl);
+      ser(c, J.CONFIG + n, 'Ready');
+      dig(c, J.PLAY + 100 * n, false); dig(c, J.PLAY + 100 * n + 1, false); dig(c, J.PLAY + 100 * n + 2, true);
     });
   }
 
   function pushSlotState(n, patch, all) {
-    if (!cipSock || cipSock.destroyed) return;
-    if ('PlayerState' in patch) {
-      dig(J.PLAY + 100 * n, all.PlayerState === 'playing'); dig(J.PLAY + 100 * n + 1, all.PlayerState === 'paused'); dig(J.PLAY + 100 * n + 2, all.PlayerState !== 'playing' && all.PlayerState !== 'paused');
+    for (const c of clients.values()) {
+      if (!c.slots.includes(n)) continue;
+      if ('PlayerState' in patch) {
+        dig(c, J.PLAY + 100 * n, all.PlayerState === 'playing'); dig(c, J.PLAY + 100 * n + 1, all.PlayerState === 'paused'); dig(c, J.PLAY + 100 * n + 2, all.PlayerState !== 'playing' && all.PlayerState !== 'paused');
+      }
+      if (patch.TextLines) patch.TextLines.forEach((t, i) => ser(c, J.ART + 100 * n + 1 + i, t));
+      if (patch.AlbumArtUrl) ser(c, J.ART + 100 * n, patch.AlbumArtUrl);
     }
-    if (patch.TextLines) patch.TextLines.forEach((t, i) => ser(J.ART + 100 * n + 1 + i, t));
-    if (patch.AlbumArtUrl) ser(J.ART + 100 * n, patch.AlbumArtUrl);
   }
 
-  function onConfig(n, text) {
+  function onConfig(c, n, text) {
     const s = slots[n], [cmd, arg] = [text.split(':')[0] + ':', text.split(':').slice(1).join(':')];
-    const reply = t => ser(J.CONFIG + n, t);
+    const reply = t => ser(c, J.CONFIG + n, t);
     if (text === 'Global:ProvidersList') reply(providers());
     else if (text === 'Global:AccountsList') reply('[Accounts,0||]');
     else if (text === 'Global:CurrentProvider') reply(currentProvider(s));
@@ -110,22 +117,21 @@ async function startEmulator(cfg) {
     } else log(`config[${n}]: ${text}`);
   }
 
-  const crpcReaders = slots.map((s, n) => new ChunkReader(async msg => {
-    let req; try { req = JSON.parse(msg); } catch { return; }
-    const res = await s._dispatch(req);
-    if (res) for (const c of chunkJson(JSON.stringify(res))) ser(J.CRPC + n, c);
-  }));
-
-  function connectCip() {
-    clearTimeout(retry);
-    if (cipSock) cipSock.destroy();
-    if (!master) return;
-    const m = master;
-    const sock = cipSock = net.connect(m.port, m.host);
+  function connectCip(c) {
+    clearTimeout(c.retry);
+    if (c.sock) c.sock.destroy();
+    const m = c.m;
+    const sock = c.sock = net.connect(m.port, m.host);
     let ping = null, lastRx = Date.now();
-    sock.on('connect', () => { log(`cip: connected to ${m.host}:${m.port} as IP-ID ${m.ipid}`); if (!cfg.advertiseIp) advertisedIp = sock.localAddress.replace(/^::ffff:/, ''); });
+    sock.on('connect', () => {
+      log(`cip: connected to ${m.host}:${m.port} as IP-ID ${m.ipid.toString(16).toUpperCase()}`);
+      const local = sock.localAddress.replace(/^::ffff:/, '');
+      for (const n of c.slots) slotIp[n] = local;
+      if (!cfg.advertiseIp) advertisedIp = local;
+    });
     const df = new Deframer((type, payload) => {
       lastRx = Date.now();
+      if (process.env.MMS_CIP_TRACE) log(`cip: rx type=${type.toString(16)} ${payload.toString('hex').slice(0, 160)}`);
       if (type === T.READY) {
         const reg = Buffer.alloc(11);
         Buffer.from(m.host.split('.').map(Number)).copy(reg, 0);
@@ -134,20 +140,22 @@ async function startEmulator(cfg) {
       } else if (type === T.ACK) {
         if (!m.online) { m.online = true; log('cip: registered'); }
         sock.write(frame(T.DATA, Buffer.from([0, 0, 2, 3, 0])));
-        publishAll();
+        publishAll(c);
         ping = setInterval(() => { if (Date.now() - lastRx > 10000) sock.destroy(); else sock.write(frame(T.PING, Buffer.from([0, 0]))); }, 1000);
       } else if (type === T.PING) sock.write(frame(T.PONG, payload));
       else if (type === T.SERIAL) {
         const p = parseSerial(payload); if (!p) return;
-        if (p.join >= J.CRPC && p.join < J.CRPC + slots.length) crpcReaders[p.join - J.CRPC].push(p.text);
-        else if (p.join >= J.CONFIG && p.join < J.CONFIG + slots.length) onConfig(p.join - J.CONFIG, p.text);
+        const crpcN = p.join - J.CRPC, cfgN = p.join - J.CONFIG;
+        if (c.readers.has(crpcN)) c.readers.get(crpcN).push(p.text);
+        else if (c.slots.includes(cfgN)) onConfig(c, cfgN, p.text);
         else log(`cip: serial ${p.join}: ${p.text}`);
       } else if (type === T.DATA) {
+        if (payload.length === 5 && payload[2] === 2 && payload[3] === 3 && payload[4] === 0) { log('cip: update request, republishing'); publishAll(c); return; }   // processor asks for all joins (Custom ignores what we sent before it asked)
         const d = parseDigital(payload);
         if (d) {
           log(`cip: digital ${d.join}=${d.value}`);
           const n = Math.floor((d.join - J.PLAY) / 100), fn = DIGITAL_INPUTS[(d.join - J.PLAY) % 100];
-          if (d.value && fn && slots[n]) Promise.resolve(slots[n].backend.player[fn]()).catch(e => log(`cip: ${fn} failed: ${e.message}`));
+          if (d.value && fn && c.slots.includes(n)) Promise.resolve(slots[n].backend.player[fn]()).catch(e => log(`cip: ${fn} failed: ${e.message}`));
         }
       }
     });
@@ -155,25 +163,45 @@ async function startEmulator(cfg) {
     sock.on('error', e => log(`cip: ${e.code || e.message}`));
     sock.on('close', () => {
       clearInterval(ping); if (m.online) log('cip: disconnected'); m.online = false;
-      if (master === m && cipSock === sock) retry = setTimeout(connectCip, 5000);
+      if (clients.get(c.key) === c && c.sock === sock) c.retry = setTimeout(() => connectCip(c), 5000);
     });
   }
 
-  function setMaster(m) {
-    master = { ...m, online: false };
-    if (cfg.stateFile) fs.writeFileSync(cfg.stateFile, JSON.stringify({ ipid: m.ipid, host: m.host, port: m.port, name: m.name }));
-    connectCip();
+  function addClient(m, slotIdxs) {
+    const key = `${m.host}:${m.port}:${m.ipid}`;
+    const c = { key, m: { ...m, online: false }, slots: slotIdxs, sock: null, retry: null, readers: new Map() };
+    for (const n of slotIdxs) c.readers.set(n, new ChunkReader(async msg => {
+      let req; try { req = JSON.parse(msg); } catch { return; }
+      const res = await slots[n]._dispatch(req);
+      if (res) for (const ch of chunkJson(JSON.stringify(res))) ser(c, J.CRPC + n, ch);
+    }));
+    clients.set(key, c);
+    connectCip(c);
+    return c;
   }
-  if (cfg.stateFile && fs.existsSync(cfg.stateFile)) { try { master = { ...JSON.parse(fs.readFileSync(cfg.stateFile, 'utf8')), online: false }; } catch {} }
+  function closeClients() { for (const c of clients.values()) { clearTimeout(c.retry); if (c.sock) c.sock.destroy(); } clients.clear(); }
 
-  const consoleSrv = await startConsole({ port: cfg.consolePort, serverId, licenseSerial, getMaster: () => master, setMaster, log });
-  const disc = await startDiscovery({ port: cfg.discoveryPort, hostname, description, log });
-  if (master) connectCip();
-  log(`MMS-${cfg.model} '${hostname}' up: discovery udp/${disc.port}, console tcp/${consoleSrv.port}, http ${httpPort}, slots ${slots.map(s => `${s.name}:${s.port}`).join(' ')}`);
+  const allSlots = slots.map((_, n) => n);
+  function setMaster(m) {   // Crestron Home: the console's addmaster
+    if (cfg.stateFile) fs.writeFileSync(cfg.stateFile, JSON.stringify({ ipid: m.ipid, host: m.host, port: m.port, name: m.name }));
+    closeClients();
+    master = addClient(m, allSlots).m;
+  }
+
+  let consoleSrv = null, disc = null;
+  if (cfg.masters && cfg.masters.length) {   // Crestron Custom: the processors are configured, there is nothing to discover or add
+    for (const m of cfg.masters) addClient({ host: m.host, port: m.port || 41794, ipid: m.ipid }, m.slots || allSlots);
+  } else {
+    if (cfg.stateFile && fs.existsSync(cfg.stateFile)) { try { master = JSON.parse(fs.readFileSync(cfg.stateFile, 'utf8')); } catch {} }
+    consoleSrv = await startConsole({ port: cfg.consolePort, serverId, licenseSerial, getMaster: () => master, setMaster, log });
+    disc = await startDiscovery({ port: cfg.discoveryPort, hostname, description, log });
+    if (master) master = addClient(master, allSlots).m;
+  }
+  log(`MMS-${cfg.model} '${hostname}' up: ${disc ? `discovery udp/${disc.port}, console tcp/${consoleSrv.port}` : `${clients.size} configured master(s)`}, http ${httpPort}, slots ${slots.map(s => `${s.name}:${s.port}`).join(' ')}`);
 
   return {
-    slots, ports: { discovery: disc.port, console: consoleSrv.port, http: httpPort }, description,
-    close() { clearTimeout(retry); if (cipSock) cipSock.destroy(); master = null; disc.close(); consoleSrv.close(); httpd.close(); slots.forEach(s => s.stop()); },
+    slots, ports: { discovery: disc && disc.port, console: consoleSrv && consoleSrv.port, http: httpPort }, description,
+    close() { closeClients(); master = null; if (disc) disc.close(); if (consoleSrv) consoleSrv.close(); httpd.close(); slots.forEach(s => s.stop()); },
   };
 }
 

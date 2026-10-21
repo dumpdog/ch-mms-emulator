@@ -70,19 +70,21 @@ class Slot extends EventEmitter {
   _onConnection(sock) {
     this.conns.add(sock);
     this.log(`${this.svc}: processor connected from ${sock.remoteAddress}`);
-    const send = obj => sock.destroyed || sock.write(frame(T.JSON, Buffer.concat([Buffer.from([1]), Buffer.from(JSON.stringify(obj))])));
+    const send = obj => (process.env.MMS_CIP_TRACE && this.log(`${this.svc}: > ${JSON.stringify(obj).slice(0, 300)}`), sock.destroyed || sock.write(frame(T.JSON, Buffer.concat([Buffer.from([1]), Buffer.from(JSON.stringify(obj))]))));
     sock._send = send;
     const df = new Deframer(async (type, payload) => {
       if (type === T.LOGIN) sock.write(frame(T.ACK, Buffer.from([0x00, 0x01, 0x00, 0x7f])));
       else if (type === T.PING) sock.write(frame(T.PONG, payload));
       else if (type === T.JSON) {
+        sock._chunks = (sock._chunks || '') + payload.subarray(1).toString('utf8');   // first byte: 0 = more chunks follow (Smart Graphics panels split big requests), 1 = last
+        if (payload[0] === 0) return;
         let req;
-        try { req = JSON.parse(payload.subarray(1).toString('utf8')); } catch { return; }
+        try { req = JSON.parse(sock._chunks); } catch { return; } finally { sock._chunks = ''; }
         const res = await this._dispatch(req, send);
         if (res) send(res);
       }
     });
-    sock.on('data', d => df.push(d));
+    sock.on('data', d => { if (process.env.MMS_CIP_TRACE) this.log(`${this.svc}: rx ${d.length}B ${d.subarray(0, 96).toString('hex')}`); df.push(d); });
     sock.on('close', () => { this.conns.delete(sock); this.handles.clear(); });
     sock.on('error', () => {});
   }
@@ -120,6 +122,7 @@ class Slot extends EventEmitter {
   _crpc(m, params) {
     const { ip } = this.advertise();
     if (m === 'Register') {
+      if (/Smart Graphics/i.test(params.name || '')) this.sg = true;   // Crestron Custom touchpanels also read Subtitle/TransactionId/IsMenuAvailable
       return {
         ver: '1.0', name: this.svc, uuid: uuidFor(this.svc),
         connections: { 'cip-direct/json-rpc': { ip, port: String(this.port) }, 'symbol/json-rpc': { ip: '0.0.0.0', port: '0' } },
@@ -153,7 +156,7 @@ class Slot extends EventEmitter {
 
   _menuProps() {
     return { MaxReqItems: 100, StatusMsgMenu: null, Title: this.menu.props.Title, ItemCnt: this.menu.props.ItemCnt,
-      ListItemIcons: false, ListSpecificFunctions: this.menu.props.ListSpecificFunctions, Level: this.menu.props.Level };
+      ListItemIcons: false, ...(this.sg ? { Subtitle: this.menu.props.Title, TransactionId: this.txn || 0, IsMenuAvailable: true } : {}), ListSpecificFunctions: this.menu.props.ListSpecificFunctions, Level: this.menu.props.Level };
   }
 
   async _menu(m, params) {
@@ -191,10 +194,12 @@ class Slot extends EventEmitter {
   }
 
   _announceMenu() {
+    this.txn = (this.txn || 0) + 1;   // Smart Graphics panels reload the list when this changes
     const { Title, ItemCnt, Level } = this.menu.props;
     this._busy(true); this._busy(false);
     this._event(this.mid, 'ClearChanged', {});
     this._event(this.mid, 'StateChanged', { Title, ItemCnt, Level });
+    this._event(this.mid, 'ListChanged', { item: 1, count: Math.max(1, Math.min(ItemCnt, 100)) });   // only Smart Graphics panels register this one
   }
 
   // ------------------------------------------------------------------ backend -> processor

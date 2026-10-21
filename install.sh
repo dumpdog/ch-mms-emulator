@@ -1,22 +1,25 @@
 #!/usr/bin/env bash
-# Installer for the Mirage MMS emulator (Raspberry Pi OS / Debian). Crestron Home sees an Autonomic Mirage MMS; each of its
-# player slots is driven by either a Plexamp/Caldera player (your Plex library) or a real BluOS player.
+# Installer for the Mirage MMS emulator (Raspberry Pi OS / Debian). Crestron Home (or a Crestron Custom SIMPL program) sees an
+# Autonomic Mirage MMS; each of its player slots is driven by either a Plexamp/Caldera player (your Plex library) or a real BluOS player.
 #
 #   ./install.sh
 #
 # Safe to re-run: it keeps your existing answers as defaults, so re-running also applies updates after copying new files.
 #   ./install.sh [--dry-run] [--yes] [--model 5A|3E] [--slot KEY=plexamp:ADDR | KEY=bluos:ADDR[#N] | KEY=none]...
 #                [--plex-url URL] [--hostname NAME] [--status] [--uninstall]
+#                [--system home|custom] [--master IP[:PORT]@IPID] [--slot-master KEY=IP[:PORT]@IPID]...
 # BluOS devices with several outputs: ADDR#N picks output N (port 11000 + 10*(N-1)), e.g. --slot B=bluos:192.168.1.50#2
 # Slot keys: MAIN, A, B, C, D, USB  (5A: Main, Player A-D, USB;  3E: Main, Player A, Player B).
 # Non-interactive: pass --yes with the --slot options (and PLEX_URL / PLEX_TOKEN in the environment or .env when any slot is plexamp).
-# Do not run it while a real Mirage MMS is on the same network (same discovery and console ports).
+# Crestron Custom (SIMPL / Studio program with an Autonomic MMS symbol): the processor is configured here instead of discovered.
+# Give each used slot its processor's IP address and the hex IP-ID of its MMS symbol; slots may share one. --master sets all slots.
+# Do not run it while a real Mirage MMS is on the same network (same discovery and console ports; Crestron Home only).
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DIR"
 
-DRY=0; YES=0; UNINSTALL=0; STATUS=0; MODEL_OPT=""; HOST_OPT=""; PLEXURL_OPT=""; SLOT_OPTS=()
+DRY=0; YES=0; UNINSTALL=0; STATUS=0; MODEL_OPT=""; HOST_OPT=""; PLEXURL_OPT=""; SLOT_OPTS=(); SYSTEM_OPT=""; MASTER_OPT=""; SMASTER_OPTS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY=1 ;;
@@ -27,7 +30,10 @@ while [[ $# -gt 0 ]]; do
     --hostname) shift; HOST_OPT="${1:?--hostname needs a name}" ;;
     --uninstall) UNINSTALL=1 ;;
     --status) STATUS=1 ;;
-    -h|--help) sed -n "2,14p" "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --system) shift; SYSTEM_OPT="${1:?--system needs home or custom}" ;;
+    --master) shift; MASTER_OPT="${1:?--master needs IP@IPID}" ;;
+    --slot-master) shift; SMASTER_OPTS+=("${1:?--slot-master needs KEY=IP@IPID}") ;;
+    -h|--help) awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print } /^set -/ { exit }' "$0"; exit 0 ;;
     *) echo "Unknown option: $1 (try --help)" >&2; exit 2 ;;
   esac
   shift
@@ -71,10 +77,10 @@ SLOT_KEYS_5A=(MAIN A B C D USB); SLOT_KEYS_3E=(MAIN A B)
 slot_label() { case $1 in MAIN) echo Main ;; USB) echo USB ;; *) echo "Player $1" ;; esac; }
 if (( STATUS )); then
   printf '%-16s %s / %s\n' "$UNIT" "$(systemctl is-active $UNIT 2>/dev/null || true)" "$(systemctl is-enabled $UNIT 2>/dev/null || true)"
-  printf 'Model %s, hostname %s\n' "$(envget MMS_MODEL)" "$(envget MMS_HOSTNAME)"
+  printf 'Model %s, hostname %s, system %s\n' "$(envget MMS_MODEL)" "$(envget MMS_HOSTNAME)" "$([[ $(envget MMS_SYSTEM) == custom ]] && echo 'Crestron Custom' || echo 'Crestron Home')"
   for k in "${SLOT_KEYS_5A[@]}"; do
     t="$(envget "MMS_${k}_TYPE")"; [[ -n $t ]] || { t="$([[ -n $(envget "MMS_PLEXAMP_$k") ]] && echo plexamp || echo none)"; }
-    printf '  %-9s %-8s %s\n' "$(slot_label "$k")" "$t" "$(envget "MMS_${k}_URL")"
+    printf '  %-9s %-8s %s%s\n' "$(slot_label "$k")" "$t" "$(envget "MMS_${k}_URL")" "$([[ -n $(envget "MMS_${k}_MASTER") ]] && echo "  -> processor $(envget "MMS_${k}_MASTER")" || true)"
   done
   exit 0
 fi
@@ -96,12 +102,34 @@ step "Mirage MMS emulator installer"
 echo "Install folder: $DIR   (service runs as: $RUN_USER)"
 echo "Press Enter to accept the value in [brackets]."
 
+# ------------------------------------------------------------------ control system
+SYSTEM="${SYSTEM_OPT:-$(envget MMS_SYSTEM)}"; SYSTEM="${SYSTEM:-home}"
+if [[ -z $SYSTEM_OPT ]] && (( ! YES )); then
+  step "Which control system will use this MMS?"
+  echo "    1 = Crestron Home (the app finds the MMS by scanning and adds it)"
+  echo "    2 = Crestron Custom (SIMPL / Studio program with an Autonomic MMS symbol)"
+  echo "    3 = Control4 (not supported: it uses a different protocol)"
+  d=1; [[ $SYSTEM == custom ]] && d=2
+  while :; do
+    printf '  Choose 1-3 [%s]: ' "$d" >&2; read -r a || true; a="${a:-$d}"
+    case $a in 1|2) break ;; 3) die "Control4 is not supported by this emulator." ;; *) echo "    Please answer 1, 2 or 3." >&2 ;; esac
+  done
+  case $a in 1) SYSTEM=home ;; 2) SYSTEM=custom ;; esac
+fi
+case ${SYSTEM,,} in
+  home|crestron-home) SYSTEM=home ;;
+  custom|crestron-custom) SYSTEM=custom ;;
+  control4|c4) die "Control4 is not supported by this emulator (it uses a different protocol)." ;;
+  *) die "--system must be home or custom (got '$SYSTEM')." ;;
+esac
+ok "System: $([[ $SYSTEM == custom ]] && echo 'Crestron Custom' || echo 'Crestron Home')"
+
 # ------------------------------------------------------------------ prerequisites
 step "Checking prerequisites"
 PKGS=()
 command -v node >/dev/null || PKGS+=(nodejs)
 command -v curl >/dev/null || PKGS+=(curl)
-[[ -x /usr/sbin/avahi-daemon ]] || command -v avahi-daemon >/dev/null || PKGS+=(avahi-daemon)   # the processor resolves this Pi's name via mDNS
+[[ $SYSTEM == custom ]] || [[ -x /usr/sbin/avahi-daemon ]] || command -v avahi-daemon >/dev/null || PKGS+=(avahi-daemon)   # Crestron Home resolves this Pi's name via mDNS; Custom dials by IP
 if (( ${#PKGS[@]} )); then
   warn "Missing packages: ${PKGS[*]}"
   confirm "Install them with apt now?" y || die "Install ${PKGS[*]} and re-run."
@@ -122,7 +150,8 @@ if [[ -z $MODEL_OPT && -z $(envget MMS_MODEL) ]] && (( ! YES )); then
 fi
 case $MODEL in 5A) SLOT_KEYS=("${SLOT_KEYS_5A[@]}") ;; 3E) SLOT_KEYS=("${SLOT_KEYS_3E[@]}") ;; *) die "Model must be 5A or 3E." ;; esac
 HOSTNAME_VAL="${HOST_OPT:-$(envget MMS_HOSTNAME)}"; HOSTNAME_VAL="${HOSTNAME_VAL:-$(hostname)}"
-ok "Model $MODEL, announced as host name \"$HOSTNAME_VAL\" (the Crestron processor must be able to resolve it; mDNS \"$HOSTNAME_VAL.local\" via avahi works)"
+if [[ $SYSTEM == custom ]]; then ok "Model $MODEL (a Custom program addresses it by IP; the host name \"$HOSTNAME_VAL\" is not used)"
+else ok "Model $MODEL, announced as host name \"$HOSTNAME_VAL\" (the Crestron processor must be able to resolve it; mDNS \"$HOSTNAME_VAL.local\" via avahi works)"; fi
 
 # ------------------------------------------------------------------ per-slot choice
 declare -A STYPE SURL
@@ -179,6 +208,45 @@ for k in "${SLOT_KEYS[@]}"; do
 done
 (( USED )) || warn "No slot is configured: every player will show \"Not configured\" (you can re-run this later)."
 
+# ------------------------------------------------------------------ Crestron Custom: processor + IP-ID per slot
+valid_master() { # IP[:PORT]@IPID with a hex IP-ID in 03..FE
+  [[ $1 =~ ^([0-9]{1,3}(\.[0-9]{1,3}){3})(:[0-9]{1,5})?@([0-9A-Fa-f]{1,2})$ ]] || return 1
+  local o ip="${BASH_REMATCH[1]}" id=$((16#${BASH_REMATCH[4]}))
+  for o in ${ip//./ }; do (( 10#$o <= 255 )) || return 1; done
+  (( id >= 3 && id <= 254 ))
+}
+declare -A SMASTER
+if [[ $SYSTEM == custom ]]; then
+  for k in "${SLOT_KEYS[@]}"; do SMASTER[$k]="$(envget "MMS_${k}_MASTER")"; [[ -n ${SMASTER[$k]} ]] || SMASTER[$k]="$(envget MMS_MASTER)"; done
+  if [[ -n $MASTER_OPT ]]; then for k in "${SLOT_KEYS[@]}"; do SMASTER[$k]="$MASTER_OPT"; done; fi
+  for spec in ${SMASTER_OPTS[@]+"${SMASTER_OPTS[@]}"}; do
+    k="${spec%%=*}"; k="${k^^}"; k="${k#PLAYER}"; k="${k// /}"
+    [[ " ${SLOT_KEYS[*]} " == *" $k "* ]] || die "Slot '$k' does not exist on a $MODEL (use ${SLOT_KEYS[*]})."
+    SMASTER[$k]="${spec#*=}"
+  done
+  if (( ! YES )) && [[ -z $MASTER_OPT && ${#SMASTER_OPTS[@]} -eq 0 ]] && (( USED )); then
+    step "Which Crestron processor does each player report to?"
+    echo "  Each used slot needs the processor's IP address and the IP-ID of the Autonomic MMS symbol in your program (hex, e.g. 0A)."
+    echo "  Players that share a processor and IP-ID are one MMS symbol; press Enter to repeat the previous answer."
+    prev_ip=""; prev_id=""
+    for k in "${SLOT_KEYS[@]}"; do
+      [[ ${STYPE[$k]} != none ]] || continue
+      cur="${SMASTER[$k]}"; dip="${cur%@*}"; did="${cur#*@}"; [[ -n $cur ]] || { dip="$prev_ip"; did="$prev_id"; }
+      while :; do
+        printf '  %-9s processor IP address%s: ' "$(slot_label "$k")" "${dip:+ [$dip]}" >&2; read -r a || true; ip="${a:-$dip}"
+        printf '            IP-ID (hex)%s: ' "${did:+ [$did]}" >&2; read -r a || true; id="${a:-$did}"
+        if valid_master "$ip@$id"; then SMASTER[$k]="$ip@${id^^}"; prev_ip="$ip"; prev_id="${id^^}"; break; fi
+        echo "            That is not a valid IPv4 address and IP-ID 03..FE; try again." >&2
+      done
+    done
+  fi
+  for k in "${SLOT_KEYS[@]}"; do
+    [[ ${STYPE[$k]} != none ]] || continue
+    valid_master "${SMASTER[$k]-}" || die "$(slot_label "$k") needs a processor: --master IP@IPID or --slot-master $k=IP@IPID (got '${SMASTER[$k]-}')."
+    id="${SMASTER[$k]#*@}"; SMASTER[$k]="${SMASTER[$k]%@*}@${id^^}"
+  done
+fi
+
 # ------------------------------------------------------------------ Plex server (only if a slot uses Plexamp)
 PLEX_URL="${PLEXURL_OPT:-${PLEX_URL-}}"; PLEX_TOKEN="${PLEX_TOKEN-}"
 if (( NPLEX )); then
@@ -228,6 +296,16 @@ for k in "${SLOT_KEYS[@]}"; do
       else warn "$(slot_label "$k"): no BluOS player answered at ${SURL[$k]}/SyncStatus"; PROBLEMS=1; fi ;;
   esac
 done
+if [[ $SYSTEM == custom ]]; then
+  declare -A SEEN
+  for k in "${SLOT_KEYS[@]}"; do
+    [[ ${STYPE[$k]} != none ]] || continue
+    m="${SMASTER[$k]}"; [[ -z ${SEEN[$m]-} ]] || continue; SEEN[$m]=1
+    hp="${m%@*}"; host="${hp%%:*}"; port=41794; [[ $hp == *:* ]] && port="${hp#*:}"
+    if timeout 4 bash -c "exec 3<>/dev/tcp/$host/$port" 2>/dev/null; then ok "Processor $host answers on CIP port $port (IP-ID ${m#*@})"
+    else warn "Processor $host does not answer on port $port (is it on, and is the program with the MMS symbol running?)"; PROBLEMS=1; fi
+  done
+fi
 (( USED )) || ok "Nothing to check"
 if (( PROBLEMS )); then confirm "Problems were found. Continue anyway?" n || die "Fix the problems above and re-run ./install.sh (your answers are not saved yet)."; fi
 
@@ -236,15 +314,20 @@ step "Installing"
 if (( DRY )); then
   echo "  [dry-run] would write .env (mode 600):"
   echo "    MMS_MODEL=$MODEL MMS_HOSTNAME=$HOSTNAME_VAL"
+  [[ $SYSTEM == custom ]] && echo "    MMS_SYSTEM=custom"
   (( NPLEX )) && echo "    PLEX_URL=$PLEX_URL PLEX_TOKEN=(hidden)"
-  for k in "${SLOT_KEYS[@]}"; do [[ ${STYPE[$k]} == none ]] || echo "    MMS_${k}_TYPE=${STYPE[$k]} MMS_${k}_URL=${SURL[$k]}"; done
+  for k in "${SLOT_KEYS[@]}"; do [[ ${STYPE[$k]} == none ]] || echo "    MMS_${k}_TYPE=${STYPE[$k]} MMS_${k}_URL=${SURL[$k]}${SMASTER[$k]:+ MMS_${k}_MASTER=${SMASTER[$k]}}"; done
 else
   # keep any setting this installer does not manage (e.g. MMS_DEMO, MMS_ADVERTISE_IP)
-  KEEP=""; [[ -f .env ]] && KEEP="$(grep -Ev '^(PLEX_URL|PLEX_TOKEN|MMS_MODEL|MMS_HOSTNAME|MMS_PLEXAMP_[A-D]|MMS_(MAIN|A|B|C|D|USB)_(TYPE|URL))=' .env || true)"
+  KEEP=""; [[ -f .env ]] && KEEP="$(grep -Ev '^(PLEX_URL|PLEX_TOKEN|MMS_MODEL|MMS_HOSTNAME|MMS_PLEXAMP_[A-D]|MMS_SYSTEM|MMS_MASTER|MMS_(MAIN|A|B|C|D|USB)_(TYPE|URL|MASTER))=' .env || true)"
   {
     printf 'MMS_MODEL=%s\nMMS_HOSTNAME=%s\n' "$MODEL" "$HOSTNAME_VAL"
+    [[ $SYSTEM != custom ]] || printf 'MMS_SYSTEM=custom\n'
     (( NPLEX )) && printf 'PLEX_URL=%s\nPLEX_TOKEN=%s\n' "$PLEX_URL" "$PLEX_TOKEN"
-    for k in "${SLOT_KEYS[@]}"; do [[ ${STYPE[$k]} == none ]] || printf 'MMS_%s_TYPE=%s\nMMS_%s_URL=%s\n' "$k" "${STYPE[$k]}" "$k" "${SURL[$k]}"; done
+    for k in "${SLOT_KEYS[@]}"; do
+      [[ ${STYPE[$k]} == none ]] || printf 'MMS_%s_TYPE=%s\nMMS_%s_URL=%s\n' "$k" "${STYPE[$k]}" "$k" "${SURL[$k]}"
+      [[ $SYSTEM != custom || ${STYPE[$k]} == none ]] || printf 'MMS_%s_MASTER=%s\n' "$k" "${SMASTER[$k]}"
+    done
     [[ -z $KEEP ]] || printf '%s\n' "$KEEP"
   } > .env.new
   chmod 600 .env.new; mv .env.new .env
@@ -272,6 +355,21 @@ if (( ! DRY )); then
 fi
 
 step "Done"
+if [[ $SYSTEM == custom ]]; then
+PI_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+cat <<EOF
+Next steps (Crestron Custom):
+  * In your SIMPL program the Autonomic MMS-5A symbol must use the IP-ID you entered (hex); if the symbol has an IP-table address, use
+    this device's address (${PI_IP:-this Pi's IP}). The emulator dials the processor, so no scan or console step is needed.
+  * Make sure each Media Object Router / touch panel in the program points at the matching player.
+Useful commands:
+  ./install.sh --status                       show the service, what drives each slot and its processor
+  ./install.sh --slot-master B=192.168.4.6@0B change one slot's processor and IP-ID
+  sudo journalctl -u $UNIT -f                 live log
+  ./install.sh --uninstall                    remove the service
+EOF
+exit 0
+fi
 cat <<EOF
 Next steps:
   * In Crestron Home setup: Crestron Wired and Wi-Fi > Ethernet and Wi-Fi > scan; the MMS appears as "$HOSTNAME_VAL". Add it,

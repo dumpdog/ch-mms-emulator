@@ -39,7 +39,8 @@ function startConsole({ port, serverId, licenseSerial, getMaster, setMaster, log
         const ipid = parseInt(args[0], 16), cport = parseInt(args[2], 10);   // IP-IDs are hex on the console (seen: 8, 9, B)
         if (!(ipid > 0) || !(cport > 0)) return "Error: Invalid arguments for 'addmaster'.";
         log(`console: addmaster ipid=${ipid} host=${peer} port=${cport} (name ${args[1]})`);
-        setMaster({ ipid, host: peer, port: cport, name: args[1] });
+        const host = /^\d+\.\d+\.\d+\.\d+$/.test(args[1]) ? args[1] : peer;   // an explicit IPv4 address (Crestron Custom / manual test) wins over the connecting peer
+        setMaster({ ipid, host, port: cport, name: args[1] });
         return 'Ack';
       }
       default:

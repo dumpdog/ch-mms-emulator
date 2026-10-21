@@ -18,7 +18,7 @@ function startDiscovery({ port, hostname, description, log }) {
   const reply = buildReply(hostname, description);
   sock.on('message', (msg, rinfo) => {
     if (msg.length !== 266 || msg[0] !== 0x14) {
-      if (msg[0] !== 0x15) log(`discovery: ignored ${msg.length}-byte packet type ${msg[0]?.toString(16)} from ${rinfo.address}:${rinfo.port}`);
+      if (msg[0] !== 0x15) log(`discovery: ignored ${msg.length}-byte packet type ${msg[0]?.toString(16)} from ${rinfo.address}:${rinfo.port} hex=${msg.toString("hex")}`);
       return;
     }
     log(`discovery query from ${rinfo.address}:${rinfo.port} for '${msg.subarray(10).toString('latin1').split('\0')[0]}'`);

@@ -56,6 +56,7 @@ function createDemoBackend() {
     ], functions: ['QuickList', 'Favorites', 'BackToTop'] }),
   }));
   const home = () => ({ title: 'Home Menu', items: [
+    ...(process.env.MMS_DEMO_PAD ? ['Playlists','Recently Added','Recently Played','Radio','Podcasts','Search'] : []).map(n => ({ l1: n, l2: 'demo row', open: () => ({ title: n, items: songItems() }) })),
     { l1: 'My Music', open: () => ({ title: 'My Music', items: [
       { l1: 'Albums', open: () => ({ title: 'Albums', items: [{ l1: 'Demo Album', open: () => ({ title: 'Demo Album', items: songItems() }) }] }) },
       { l1: 'Artists', open: () => ({ title: 'Artists', items: [{ l1: 'Demo Artist', open: () => ({ title: 'Demo Artist', items: songItems() }) }] }) },
