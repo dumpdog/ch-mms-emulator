@@ -114,6 +114,19 @@ test('roon: Search by letter for Crestron Home (no text entry)', async () => {
   assert.strictEqual(srv.depth('browse'), 3); assert.strictEqual((await titles(menu, 30))[0], '#');
 });
 
+test('roon: Roon menu still opens after Search, or another browse, reset the stack', async () => {
+  const core = makeCore(); const be = mk(core); await be.start();
+  const menu = await new Menu(await be.home()).init(), srv = core.srv;
+  await menu.select(1); await menu.select(1);                                        // Search > Artists by letter (resets Roon's stack)
+  await menu.select(3); menu.back(); menu.back(); menu.back(); await settle();       // B, then back out to the Roon menu (no re-read of its rows)
+  assert.strictEqual(menu.stack.length, 1); assert.strictEqual(srv.depth('browse'), 1);
+  assert.strictEqual(await menu.select(2), 'navigated');                              // Library: the cached row's key is stale by now
+  assert.deepStrictEqual(await titles(menu), ['Artists', 'Albums', 'Tracks']);
+  menu.back(); await settle();
+  assert.strictEqual(await menu.select(3), 'navigated'); assert.deepStrictEqual(await titles(menu), ['Road Trip']);   // a second row, same menu
+  assert.strictEqual(srv.depth('browse'), menu.stack.length);
+});
+
 test('roon: waiting for pairing, missing zone, recovery', async () => {
   const core = makeCore({ zones: [], ready: false }); const be = mk(core); await be.start();
   const menu = await new Menu(await be.home()).init();

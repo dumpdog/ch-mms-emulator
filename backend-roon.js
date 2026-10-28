@@ -91,8 +91,9 @@ function createRoonBackend({ core, zoneName, name = 'MMS', log, sessionKey = nam
   const reset = async h => { gen[h]++; return core.browse({ ...hier(h), pop_all: true }); };     // call inside serial()
   const waiting = () => core.ready() ? [] : [{ l1: 'Waiting for Roon', l2: 'Enable "MMS Emulator" in Roon > Settings > Extensions', play: () => {} }];
 
-  function itemOf(h, it) {
-    const row = { l1: it.title || '', l2: it.subtitle || '', art: enc(it.image_key) }, k = it.item_key;
+  const kv = key => (typeof key === 'function' ? key() : key);     // a key can be looked up at use time (see home)
+  function itemOf(h, it, keyOf) {
+    const row = { l1: it.title || '', l2: it.subtitle || '', art: enc(it.image_key) }, k = keyOf ? it.item_key && keyOf : it.item_key;
     if (!k || it.hint === 'header' || it.input_prompt) return row;          // not selectable here (search text is typed through Find)
     if (it.hint === 'action') return { ...row, play: () => act(h, k) };
     if (it.hint === 'action_list') return { ...row, play: () => playItem(h, k), context: () => actionsNode(h, k, row.l1) };
@@ -100,26 +101,31 @@ function createRoonBackend({ core, zoneName, name = 'MMS', log, sessionKey = nam
   }
   function levelNode(h, list, pops = 1) {
     const g = gen[h], level = list.level;
+    L(`list "${list.title}" level ${level}, ${list.count} items`);
     return {
       title: list.title || 'Roon', count: async () => list.count,
-      page: async (start, n) => ((await serial(() => core.load({ ...hier(h), level, offset: start, count: n }))).items || []).map(i => itemOf(h, i)),
+      page: async (start, n) => {
+        const r = await serial(() => core.load({ ...hier(h), level, offset: start, count: n })), items = r.items || [];
+        if (items.length < Math.min(n, list.count - start)) L(`list "${list.title}": asked for ${n} from ${start}, got ${items.length} (Roon says ${list.count} items, load says ${(r.list || {}).count})`);
+        return items.map(i => itemOf(h, i));
+      },
       leave: () => serial(async () => { if (g === gen[h]) for (let i = 0; i < pops; i++) await core.browse({ ...hier(h), pop_levels: 1 }); }).catch(e => L(`leave failed: ${e.message}`)),
     };
   }
   async function openLevel(h, key, label) {
-    const r = await serial(() => core.browse({ ...hier(h), item_key: key, zone_or_output_id: zoneId() }));
+    const r = await serial(async () => core.browse({ ...hier(h), item_key: await kv(key), zone_or_output_id: zoneId() }));
     return r.action === 'list' ? levelNode(h, r.list) : placeholder(label || 'Roon', r.message || 'Nothing to show');   // no level was pushed: no leave
   }
-  const act = (h, key) => serial(() => core.browse({ ...hier(h), item_key: key, zone_or_output_id: zoneId() })).catch(e => L(`action failed: ${e.message}`));
+  const act = (h, key) => serial(async () => core.browse({ ...hier(h), item_key: await kv(key), zone_or_output_id: zoneId() })).catch(e => L(`action failed: ${e.message}`));
   async function actionsNode(h, key, label) {
-    const r = await serial(() => core.browse({ ...hier(h), item_key: key, zone_or_output_id: zoneId() }));
+    const r = await serial(async () => core.browse({ ...hier(h), item_key: await kv(key), zone_or_output_id: zoneId() }));
     if (r.action !== 'list') return placeholder(label, r.message || 'No actions');
     return { ...levelNode(h, r.list), title: label };
   }
   // Select on a track/album/playlist: run its "Play Now" action (the first action if there is none by that name)
   const playItem = (h, key) => serial(async () => {
     const id = zoneId(); if (!id) return L(`zone "${zoneName}" not available`);
-    const r = await core.browse({ ...hier(h), item_key: key, zone_or_output_id: id });
+    const r = await core.browse({ ...hier(h), item_key: await kv(key), zone_or_output_id: id });
     if (r.action !== 'list') return;                                           // played straight away, no action list was pushed
     try {
       const acts = ((await core.load({ ...hier(h), level: r.list.level, offset: 0, count: 50 })).items || []).filter(i => i.hint === 'action' && i.item_key);
@@ -182,6 +188,10 @@ function createRoonBackend({ core, zoneName, name = 'MMS', log, sessionKey = nam
 
   // ---------------------------------------------------------------- menus
   // the home node re-reads Roon's top level every time it is entered (also after a restart or once the extension is enabled)
+  const rootRows = async () => {                                   // call inside serial(): resets the stack to Roon's top level and lists it
+    const r = await reset('browse');
+    return r.action === 'list' ? ((await core.load({ ...hier('browse'), offset: 0, count: 100 })).items || []) : [];
+  };
   const home = () => ({
     title, functions: ['QuickList', 'BackToTop'],
     items: async () => {
@@ -190,11 +200,11 @@ function createRoonBackend({ core, zoneName, name = 'MMS', log, sessionKey = nam
       const names = zone ? [] : core.zones().map(z => z.display_name);
       const notes = zone ? [] : [{ l1: `Roon zone "${zoneName}" not found`, l2: names.length ? `Zones: ${names.join(', ')}` : 'Roon reports no zones', play: () => {} }];
       if (!zone && names.length) log(`roon: zone "${zoneName}" not found; Roon has: ${names.join(', ')}`);
-      const rows = await serial(async () => {
-        const r = await reset('browse');
-        return r.action === 'list' ? ((await core.load({ ...hier('browse'), offset: 0, count: 100 })).items || []) : [];
-      });
-      return [...notes, { l1: 'Search', open: searchMenu }, ...rows.map(i => itemOf('browse', i))];
+      const rows = await serial(rootRows);
+      // Search by letter (or anything else that resets this session) invalidates the keys read here, and the Menu keeps these rows while
+      // you browse elsewhere and come back. So each row looks its key up again when it is used (same title, else same position).
+      const fresh = (i, t) => async () => { const now = await rootRows(); const it = now.find(r => r.title === t) || now[i]; if (!it || !it.item_key) throw new Error(`Roon row "${t}" is gone`); return it.item_key; };
+      return [...notes, { l1: 'Search', open: searchMenu }, ...rows.map((i, n) => itemOf('browse', i, fresh(n, i.title)))];
     },
   });
   async function quickList() {
