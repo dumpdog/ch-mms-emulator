@@ -1,7 +1,7 @@
 # MMS Emulator for Crestron Home
 
 Emulates an MMS (model 5A: Main, Player A-D, USB) so Crestron Home can browse and control music through its
-normal media-player menus. Each slot is driven by a Plexamp/Caldera player (your Plex library), a BluOS player or a WiiM player.
+normal media-player menus. Each slot is driven by a Plexamp/Caldera player (your Plex library), a BluOS player, a WiiM player or a Roon zone (see [docs/ROON.md](docs/ROON.md)).
 
 ## How it works
 
@@ -14,7 +14,7 @@ normal media-player menus. Each slot is driven by a Plexamp/Caldera player (your
    for the menu tree, now playing, transport, shuffle/repeat and thumbs.
 4. **Artwork.** Served over HTTP (`/getart`, default port 80).
 5. **Backends.** A slot maps to a backend: Plexamp/Caldera (`backend-plex.js`, via the Plex server and the Plexamp player) or
-   BluOS (`backend-bluos.js`, via the BluOS HTTP API) or WiiM (`backend-wiim.js`, via the WiiM HTTP API). Unconfigured slots show "Not configured".
+   BluOS (`backend-bluos.js`, via the BluOS HTTP API) or WiiM (`backend-wiim.js`, via the WiiM HTTP API) or Roon (`backend-roon.js`, as a Roon extension). Unconfigured slots show "Not configured".
 
 | Port | Protocol | Purpose |
 |---|---|---|
@@ -34,6 +34,7 @@ Outbound: the CIP connection to the processor, the Plex server, Plexamp (default
 - For Plexamp slots: a Plex server, its address and a Plex token, and a Plexamp or Caldera player (reachable on its port, default 32500).
 - For BluOS slots: the player's IP address (and the output number on multi-output players).
 - For WiiM slots: the player's IP address.
+- For Roon slots: a Roon Core on the same network, the zone name, and the extension enabled once in Roon (`npm` and `git` are installed for it). See [docs/ROON.md](docs/ROON.md).
 - **A real MMS on the same network is fine** (tested alongside a real MMS 3E).
 
 ## Install
@@ -77,8 +78,10 @@ Slot keys: `MAIN`, `A`, `B`, `C`, `D`, `USB`. Re-running keeps your saved answer
 
 | Variable | Meaning |
 |---|---|
-| `MMS_<SLOT>_TYPE` | `plexamp`, `bluos` or `wiim` |
-| `MMS_<SLOT>_URL` | Player address (Plexamp default port 32500, BluOS 11000, WiiM tries HTTPS then HTTP) |
+| `MMS_<SLOT>_TYPE` | `plexamp`, `bluos`, `wiim` or `roon` |
+| `MMS_<SLOT>_URL` | Player address (Plexamp default port 32500, BluOS 11000, WiiM tries HTTPS then HTTP, Roon is the zone name) |
+| `MMS_<SLOT>_ROON_ZONE` | On a BluOS slot: also browse and play this Roon zone (Home Menu > Roon) |
+| `MMS_ROON_HOST`, `MMS_ROON_STATE` | Connect to a given Roon Core instead of discovering one; where the pairing is kept |
 | `PLEX_URL`, `PLEX_TOKEN` | Plex server and token (when any slot is Plexamp) |
 | `MMS_PROVIDER_LABEL` | Optional visible text after the output label on Crestron's Services screen (default: nothing) |
 | `MMS_HOSTNAME` | Name the processor resolves (default: system host name) |

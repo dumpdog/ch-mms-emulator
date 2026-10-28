@@ -1,8 +1,14 @@
 {
   "name": "mms-emulator",
   "version": "0.1.0",
-  "description": "MMS emulator for Crestron Home (discovery, CIP client, CRPC browse). Phase 1: protocol + demo backend.",
+  "description": "MMS emulator for Crestron Home (discovery, CIP client, CRPC browse; Plexamp, BluOS, WiiM and Roon backends)",
   "private": true,
   "type": "commonjs",
-  "scripts": { "start": "node index.js", "test": "node --test test/*.test.js" }
+  "scripts": { "start": "node index.js", "test": "node --test test/*.test.js" },
+  "optionalDependencies": {
+    "node-roon-api": "github:roonlabs/node-roon-api#055dae6c2ac45b6c738aa3b9e5ac1fd722ed60e8",
+    "node-roon-api-transport": "github:roonlabs/node-roon-api-transport#2ee60008a4cdb90c34ff3de58bb4b949067f1d20",
+    "node-roon-api-browse": "github:roonlabs/node-roon-api-browse#98adcbaba3a30fd6ce109c1f04cd361536143222",
+    "node-roon-api-image": "github:roonlabs/node-roon-api-image#a5f0efaf2dfb5457e91abe326c3a40d865131d32"
+  }
 }

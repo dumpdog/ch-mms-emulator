@@ -123,6 +123,7 @@ function createBluosBackend({ playerUrl, name = 'MMS', log, pollMs = 1000, skipW
   }
 
   Object.assign(player, {
+    snapshot: () => ({ ...cur }),
     play: cmd('/Play'), pause: cmd('/Pause'), stop: cmd('/Stop'),
     async next() { await init(); await get(s.stream && typeof s.actions.skip === 'string' ? s.actions.skip : '/Skip'); setTimeout(refresh, 400); },
     async prev() { await init(); await get(s.stream && typeof s.actions.back === 'string' ? s.actions.back : '/Back'); setTimeout(refresh, 400); },

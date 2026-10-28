@@ -3,6 +3,8 @@
 // Node: { title, functions? } plus either
 //   items: Item[] | () => Promise<Item[]>              (small, fully materialised lists)
 //   count: () => Promise<number>, page: (start, n) => Promise<Item[]>   (large lists, fetched on demand; start is 0-based)
+//   leave?: () => void   called when the node is popped off the stack (back / back to top / Favorites jump), for backends whose
+//                        server keeps its own browse stack (Roon) and must pop the same level
 // Item: { l1, l2?, art?, open?: () => Node, play?: () => void, context?: () => Node }
 // Levels: home is 0, open() goes one deeper, a context menu (PressAndHold) stays at the same level.
 
@@ -51,11 +53,12 @@ class Menu {
     return 'navigated';
   }
   // jump straight to a list one level below home (Favorites / QuickList buttons)
-  async goto(node) { this.stack = [this.stack[0], await this._enter(node, 1)]; }
+  async goto(node) { this._leave(this.stack.slice(1)); this.stack = [this.stack[0], await this._enter(node, 1)]; }
   // plus button: the open long-press menu's own action (add that item to the queue)
   async create() { const f = this.top.node.create; if (!f) return false; await f(); return true; }
-  back() { if (this.stack.length > 1) { this.stack.pop(); return true; } return false; }
-  async backToTop() { this.stack = [await this._enter(this.home, 0)]; }
+  back() { if (this.stack.length > 1) { this._leave([this.stack.pop()]); return true; } return false; }
+  async backToTop() { this._leave(this.stack.slice(1)); this.stack = [await this._enter(this.home, 0)]; }
+  _leave(entries) { for (const e of [...entries].reverse()) if (e.node.leave) Promise.resolve().then(() => e.node.leave()).catch(() => {}); }
 }
 
 module.exports = { Menu };
