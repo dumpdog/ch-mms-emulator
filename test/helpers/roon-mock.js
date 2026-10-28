@@ -62,6 +62,7 @@ function makeCore({ zones = [zone()], ready = true } = {}) {
   return {
     events, calls, srv,
     ready: () => st.ready,
+    zones: () => st.zones,
     zoneByName: n => st.zones.find(z => z.display_name.toLowerCase() === String(n).toLowerCase()) || null,
     control: rec('control'), seek: rec('seek'), settings: rec('settings'), playFromHere: rec('playFromHere'),
     browse: async o => srv.browse(o), load: async o => srv.load(o),

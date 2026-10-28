@@ -121,6 +121,9 @@ test('roon: waiting for pairing, missing zone, recovery', async () => {
   assert.strictEqual((await be.search('x')).items[0].l1, 'Waiting for Roon');
   core.pair(true);                                                                   // paired, but no zone of that name yet
   await menu.backToTop(); assert.match((await titles(menu))[0], /zone "Living Room" not found/);
+  assert.match((await menu.data(1, 5))[0].L2, /no zones/);
+  core.set([zone({ display_name: 'Kitchen', outputs: [{ display_name: 'Kitchen' }] })]);
+  await menu.backToTop(); assert.match((await menu.data(1, 5))[0].L2, /Zones: Kitchen/);   // the note lists what Roon does have
   core.set([zone()]);                                                                // the zone appears
   await menu.backToTop(); assert.deepStrictEqual(await titles(menu), ['Search', 'Library', 'Playlists']);
 });

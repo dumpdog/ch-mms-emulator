@@ -187,7 +187,9 @@ function createRoonBackend({ core, zoneName, name = 'MMS', log, sessionKey = nam
     items: async () => {
       refresh();                                                    // the slot builds this menu before start(), so find the zone now
       if (!core.ready()) return waiting();
-      const notes = zone ? [] : [{ l1: `Roon zone "${zoneName}" not found`, l2: 'Check the zone name in Roon', play: () => {} }];
+      const names = zone ? [] : core.zones().map(z => z.display_name);
+      const notes = zone ? [] : [{ l1: `Roon zone "${zoneName}" not found`, l2: names.length ? `Zones: ${names.join(', ')}` : 'Roon reports no zones', play: () => {} }];
+      if (!zone && names.length) log(`roon: zone "${zoneName}" not found; Roon has: ${names.join(', ')}`);
       const rows = await serial(async () => {
         const r = await reset('browse');
         return r.action === 'list' ? ((await core.load({ ...hier('browse'), offset: 0, count: 100 })).items || []) : [];
