@@ -83,6 +83,7 @@ Slot keys: `MAIN`, `A`, `B`, `C`, `D`, `USB`. Re-running keeps your saved answer
 | `MMS_<SLOT>_ROON_ZONE` | On a BluOS slot: also browse and play this Roon zone (Home Menu > Roon) |
 | `MMS_ROON_HOST`, `MMS_ROON_STATE` | Connect to a given Roon Core instead of discovering one; where the pairing is kept |
 | `PLEX_URL`, `PLEX_TOKEN` | Plex server and token (when any slot is Plexamp) |
+| `MMS_PROVIDER_FOLLOWS_SOURCE` | `1`: on a BluOS + Roon slot the provider label reads "Roon" while Roon is the active source, blank again when BluOS plays (experimental) |
 | `MMS_PROVIDER_LABEL` | Optional visible text after the output label on Crestron's Services screen (default: nothing) |
 | `MMS_HOSTNAME` | Name the processor resolves (default: system host name) |
 | `MMS_MODEL` | `5A` (default) or `3E` |

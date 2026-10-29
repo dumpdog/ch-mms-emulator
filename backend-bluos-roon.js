@@ -24,6 +24,7 @@ function createBluosRoonBackend({ bluos, roon, zoneName, log, name = 'MMS' }) {
     if (next !== active) {
       active = next;
       log(`[bluos+roon ${name}] now following ${active}`);
+      player.emit('source', active);                                                  // for MMS_PROVIDER_FOLLOWS_SOURCE (emulator.js)
       player.emit('state', { ...CLEARED, ...side().player.snapshot() });             // the other side's text must not linger
     } else if (from === active) player.emit('state', patch);
   }

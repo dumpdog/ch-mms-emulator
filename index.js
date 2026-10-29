@@ -9,6 +9,7 @@
 //   MMS_PLEXAMP_A..D                     older spelling of MMS_<A..D>_TYPE=plexamp + MMS_<A..D>_URL
 //   MMS_DEMO=1                           fake library on unconfigured slots instead
 //   MMS_PROVIDER_LABEL (optional visible text for the Services screen; default is blank, see emulator.js),
+//   MMS_PROVIDER_FOLLOWS_SOURCE=1 (a BluOS+Roon slot shows "Roon" as its provider label while Roon is the active source),
 //   MMS_HOSTNAME (default os.hostname(); must be resolvable by the processor, e.g. via avahi), MMS_MODEL (5A|3E),
 //   MMS_HTTP_PORT (default 80), MMS_STATE_FILE (default ./state.json), MMS_ADVERTISE_IP
 
@@ -61,7 +62,7 @@ function createBackend(name) {
 startEmulator({
   hostname: env.MMS_HOSTNAME || os.hostname(),
   model: env.MMS_MODEL || '5A',
-  advertiseIp: env.MMS_ADVERTISE_IP, providerLabel: env.MMS_PROVIDER_LABEL,
+  advertiseIp: env.MMS_ADVERTISE_IP, providerLabel: env.MMS_PROVIDER_LABEL, providerFollowsSource: /^(1|true|yes|on)$/i.test(env.MMS_PROVIDER_FOLLOWS_SOURCE || ''),
   discoveryPort: 41794, consolePort: 5004, directBase: 41798,
   httpPort: parseInt(env.MMS_HTTP_PORT || '80', 10),
   stateFile: env.MMS_STATE_FILE || path.join(__dirname, 'state.json'),

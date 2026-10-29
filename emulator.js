@@ -80,8 +80,23 @@ async function startEmulator(cfg) {
   const dig = (join, v) => send(digitalFrame(join, v));
 
   const label = providerLabel(cfg.providerLabel);
-  const providers = () => `[Providers,1||${label},MyMusic,http://${advertise().httpHost}/getart?guid=${NIL_GUID}&h=500&w=500&c=1&fmt=png&ext=.png,1]`;
+  const labels = slots.map(() => label);                 // per slot, so a slot can show "Roon" while Roon is its active source
+  const providers = n => `[Providers,1||${labels[n]},MyMusic,http://${advertise().httpHost}/getart?guid=${NIL_GUID}&h=500&w=500&c=1&fmt=png&ext=.png,1]`;
   const currentProvider = s => `[CurrentProvider||${s.cur.name},${s.cur.idx}]`;
+
+  // MMS_PROVIDER_FOLLOWS_SOURCE: a slot whose backend reports its source ('source' event: 'roon' | 'bluos') shows "Roon" as its provider
+  // label while Roon is the active source and the normal label otherwise. Whether Crestron re-reads it mid-use is not known, so it is
+  // pushed unasked as well as returned on request.
+  if (cfg.providerFollowsSource) slots.forEach((s, n) => {
+    if (!s.backend.player || !s.backend.player.on) return;
+    s.backend.player.on('source', src => {
+      const roon = src === 'roon';
+      labels[n] = roon ? 'Roon' : label;
+      log(`slot ${n + 1}: provider label "${roon ? 'Roon' : label.trim() ? label : '(blank)'}"`);
+      s.backend.player.emit('state', { ProviderName: roon ? 'Roon' : s.backend.providerName });
+      ser(J.CONFIG + n, providers(n));
+    });
+  });
 
   function publishAll() {
     const { ip } = advertise();
@@ -106,7 +121,7 @@ async function startEmulator(cfg) {
   function onConfig(n, text) {
     const s = slots[n], [cmd, arg] = [text.split(':')[0] + ':', text.split(':').slice(1).join(':')];
     const reply = t => ser(J.CONFIG + n, t);
-    if (text === 'Global:ProvidersList') reply(providers());
+    if (text === 'Global:ProvidersList') reply(providers(n));
     else if (text === 'Global:AccountsList') reply('[Accounts,0||]');
     else if (text === 'Global:CurrentProvider') reply(currentProvider(s));
     else if (cmd === 'Select:') {
