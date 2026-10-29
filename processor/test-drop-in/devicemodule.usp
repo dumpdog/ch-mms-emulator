@@ -98,7 +98,7 @@ Function SendCmd(STRING s)
     STRING t[300];
     If (connected)
     {
-        t = s + "\x0D\x0A";
+        t = "CMD " + s + "\x0D\x0A";
         SocketSend(client, t);
     }
 }
@@ -357,7 +357,7 @@ SOCKETRECEIVE client
 
 Function Main()
 {
-    STRING d[100];
+    STRING d[200];
     connected = 0;
     Offline_fb = 1;
     WaitForInitializationComplete();
@@ -369,7 +369,7 @@ Function Main()
         }
         Else
         {
-            d = "Diag in=" + ITOA(crpcIn) + " bytes=" + ITOA(crpcBytes) + " rx=" + ITOA(rxChars);
+            d = "Diag in=" + ITOA(crpcIn) + " bytes=" + ITOA(crpcBytes) + " rx=" + ITOA(rxChars) + " panelOffline=" + ITOA(Ready) + " mmsOffline=" + ITOA(StandBy) + " refresh=" + ITOA(ConvenienceSwitch) + " select=" + ITOA(Volume);
             SendCmd(d);
         }
         Delay(500);
