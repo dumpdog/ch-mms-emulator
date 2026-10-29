@@ -1,31 +1,33 @@
 #!/usr/bin/env bash
-# Installer for the Mirage MMS emulator (Raspberry Pi OS / Debian). Crestron Home (or a Crestron Custom SIMPL program) sees an
-# Autonomic Mirage MMS; each of its player slots is driven by either a Plexamp/Caldera player (your Plex library) or a real BluOS player.
+# Installer for the MMS emulator (Raspberry Pi OS / Debian). Crestron Home (or a Crestron Custom SIMPL program) sees an MMS; each of its
+# player slots is driven by a Plexamp/Caldera player (your Plex library), a real BluOS player, a real WiiM player or a Roon zone.
 #
 #   ./install.sh
 #
 # Safe to re-run: it keeps your existing answers as defaults, so re-running also applies updates after copying new files.
-#   ./install.sh [--dry-run] [--yes] [--model 5A|3E] [--slot KEY=plexamp:ADDR | KEY=bluos:ADDR[#N] | KEY=none]...
-#                [--plex-url URL] [--hostname NAME] [--status] [--uninstall]
+#   ./install.sh [--dry-run] [--yes] [--model 5A|3E] [--slot KEY=plexamp:ADDR | KEY=bluos:ADDR[#N] | KEY=wiim:ADDR | KEY=roon:ZONE | KEY=none]...
+#                [--roon-zone KEY=ZONE]... [--plex-url URL] [--hostname NAME] [--status] [--uninstall]
 #                [--system home|custom] [--master IP[:PORT]@IPID] [--slot-master KEY=IP[:PORT]@IPID]...
+# Roon: --slot B=roon:Living Room drives a slot from that Roon zone; --roon-zone B="Living Room" on a BluOS slot adds Home Menu > Roon to it.
 # BluOS devices with several outputs: ADDR#N picks output N (port 11000 + 10*(N-1)), e.g. --slot B=bluos:192.168.1.50#2
 # Slot keys: MAIN, A, B, C, D, USB  (5A: Main, Player A-D, USB;  3E: Main, Player A, Player B).
 # Non-interactive: pass --yes with the --slot options (and PLEX_URL / PLEX_TOKEN in the environment or .env when any slot is plexamp).
 # Crestron Custom (SIMPL / Studio program with an Autonomic MMS symbol): the processor is configured here instead of discovered.
 # Give each used slot its processor's IP address and the hex IP-ID of its MMS symbol; slots may share one. --master sets all slots.
-# Do not run it while a real Mirage MMS is on the same network (same discovery and console ports; Crestron Home only).
+# Crestron Home: a real MMS on the same network is fine (tested alongside a real MMS 3E). Custom: the IP-ID must not be in use by a real MMS.
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DIR"
 
-DRY=0; YES=0; UNINSTALL=0; STATUS=0; MODEL_OPT=""; HOST_OPT=""; PLEXURL_OPT=""; SLOT_OPTS=(); SYSTEM_OPT=""; MASTER_OPT=""; SMASTER_OPTS=()
+DRY=0; YES=0; UNINSTALL=0; STATUS=0; MODEL_OPT=""; HOST_OPT=""; PLEXURL_OPT=""; SLOT_OPTS=(); ROON_OPTS=(); SYSTEM_OPT=""; MASTER_OPT=""; SMASTER_OPTS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY=1 ;;
     --yes|-y) YES=1 ;;
     --model) shift; MODEL_OPT="${1:?--model needs 5A or 3E}" ;;
-    --slot) shift; SLOT_OPTS+=("${1:?--slot needs KEY=plexamp:ADDR, KEY=bluos:ADDR or KEY=none}") ;;
+    --slot) shift; SLOT_OPTS+=("${1:?--slot needs KEY=plexamp:ADDR, KEY=bluos:ADDR, KEY=wiim:ADDR, KEY=roon:ZONE or KEY=none}") ;;
+    --roon-zone) shift; ROON_OPTS+=("${1:?--roon-zone needs KEY=ZONE NAME}") ;;
     --plex-url) shift; PLEXURL_OPT="${1:?--plex-url needs an address}" ;;
     --hostname) shift; HOST_OPT="${1:?--hostname needs a name}" ;;
     --uninstall) UNINSTALL=1 ;;
@@ -65,6 +67,9 @@ bluos_url() { # bluos_url "host[:port][#N]" -> URL; output N of a multi-output d
   [[ $v =~ :[0-9]+$ ]] || v="$v:$((11000 + 10 * (n - 1)))"
   printf 'http://%s' "$v"
 }
+wiim_url() { # wiim_url "host[:port]" -> the host as given; the emulator tries https, then http, itself
+  local v="${1//[[:space:]]/}"; v="${v%/}"; printf '%s' "$v"
+}
 norm_url() { # norm_url "<host or url>" <default port>
   local v="${1//[[:space:]]/}"; v="${v%/}"
   [[ $v =~ ^https?:// ]] || v="http://$v"
@@ -80,7 +85,10 @@ if (( STATUS )); then
   printf 'Model %s, hostname %s, system %s\n' "$(envget MMS_MODEL)" "$(envget MMS_HOSTNAME)" "$([[ $(envget MMS_SYSTEM) == custom ]] && echo 'Crestron Custom' || echo 'Crestron Home')"
   for k in "${SLOT_KEYS_5A[@]}"; do
     t="$(envget "MMS_${k}_TYPE")"; [[ -n $t ]] || { t="$([[ -n $(envget "MMS_PLEXAMP_$k") ]] && echo plexamp || echo none)"; }
-    printf '  %-9s %-8s %s%s\n' "$(slot_label "$k")" "$t" "$(envget "MMS_${k}_URL")" "$([[ -n $(envget "MMS_${k}_MASTER") ]] && echo "  -> processor $(envget "MMS_${k}_MASTER")" || true)"
+    printf '  %-9s %-8s %s%s
+' "$(slot_label "$k")" "$t" "$(envget "MMS_${k}_URL")" "$([[ -n $(envget "MMS_${k}_MASTER") ]] && echo "  -> processor $(envget "MMS_${k}_MASTER")" || true)"
+    z="$(envget "MMS_${k}_ROON_ZONE")"; [[ -z $z ]] || printf '  %-9s %-8s %s
+' '' '+ roon' "$z"
   done
   exit 0
 fi
@@ -98,7 +106,7 @@ if (( UNINSTALL )); then
   exit 0
 fi
 
-step "Mirage MMS emulator installer"
+step "MMS emulator installer"
 echo "Install folder: $DIR   (service runs as: $RUN_USER)"
 echo "Press Enter to accept the value in [brackets]."
 
@@ -140,7 +148,7 @@ if (( ! DRY )); then
   NODE_BIN="$(command -v node)"
   NODE_MAJOR="$("$NODE_BIN" -p 'process.versions.node.split(".")[0]')"
   (( NODE_MAJOR >= 18 )) || die "Node.js 18 or newer is required (found $("$NODE_BIN" -v)). See https://nodejs.org or use NodeSource."
-  ok "Node $("$NODE_BIN" -v) (no npm packages needed)"
+  ok "Node $("$NODE_BIN" -v) (npm packages are only fetched for Roon)"
 else NODE_BIN="$(command -v node || echo /usr/bin/node)"; ok "(dry-run) skipping version checks"; fi
 
 # ------------------------------------------------------------------ model + name
@@ -154,17 +162,23 @@ if [[ $SYSTEM == custom ]]; then ok "Model $MODEL (a Custom program addresses it
 else ok "Model $MODEL, announced as host name \"$HOSTNAME_VAL\" (the Crestron processor must be able to resolve it; mDNS \"$HOSTNAME_VAL.local\" via avahi works)"; fi
 
 # ------------------------------------------------------------------ per-slot choice
-declare -A STYPE SURL
+declare -A STYPE SURL ROONZ
 for k in "${SLOT_KEYS[@]}"; do
-  t="$(envget "MMS_${k}_TYPE")"; u="$(envget "MMS_${k}_URL")"
+  t="$(envget "MMS_${k}_TYPE")"; u="$(envget "MMS_${k}_URL")"; ROONZ[$k]="$(envget "MMS_${k}_ROON_ZONE")"
   if [[ -z $t && -n $(envget "MMS_PLEXAMP_$k") ]]; then t=plexamp; u="$(envget "MMS_PLEXAMP_$k")"; fi   # older .env spelling
   STYPE[$k]="${t:-none}"; SURL[$k]="$u"
 done
 for spec in ${SLOT_OPTS[@]+"${SLOT_OPTS[@]}"}; do
   k="${spec%%=*}"; k="${k^^}"; k="${k#PLAYER}"; k="${k// /}"; v="${spec#*=}"; t="${v%%:*}"; u=""; [[ $v == *:* ]] && u="${v#*:}"
   [[ " ${SLOT_KEYS[*]} " == *" $k "* ]] || die "Slot '$k' does not exist on a $MODEL (use ${SLOT_KEYS[*]})."
-  case ${t,,} in plexamp|bluos) [[ -n $u ]] || die "--slot $spec needs an address after the type." ;; none) u="" ;; *) die "--slot type must be plexamp, bluos or none (got '$t')." ;; esac
+  case ${t,,} in plexamp|bluos|wiim|roon) [[ -n $u ]] || die "--slot $spec needs an address after the type (for roon: the zone name)." ;; none) u="" ;; *) die "--slot type must be plexamp, bluos, wiim, roon or none (got '$t')." ;; esac
   STYPE[$k]="${t,,}"; SURL[$k]="$u"
+done
+for spec in ${ROON_OPTS[@]+"${ROON_OPTS[@]}"}; do
+  [[ $spec == *=* ]] || die "--roon-zone $spec needs KEY=ZONE NAME (an empty zone removes it)."
+  k="${spec%%=*}"; k="${k^^}"; k="${k#PLAYER}"; k="${k// /}"
+  [[ " ${SLOT_KEYS[*]} " == *" $k "* ]] || die "Slot '$k' does not exist on a $MODEL (use ${SLOT_KEYS[*]})."
+  ROONZ[$k]="${spec#*=}"
 done
 
 if (( ! YES )) && [[ ${#SLOT_OPTS[@]} -eq 0 ]]; then
@@ -172,16 +186,20 @@ if (( ! YES )) && [[ ${#SLOT_OPTS[@]} -eq 0 ]]; then
   echo "  Each slot shows up in Crestron Home as its own source. Choose, per slot:"
   echo "    p = Plexamp / Caldera (your Plex library, played on that Plexamp device's own output)"
   echo "    b = BluOS player (its sources, inputs, presets and queue)"
+  echo "    w = WiiM / LinkPlay player (its presets; the WiiM has no library API)"
+  echo "    r = Roon zone (browse and play through your Roon Core; the Roon extension is enabled once in Roon)"
   echo "    n = not used"
   for k in "${SLOT_KEYS[@]}"; do
-    cur="${STYPE[$k]}"; d=n; [[ $cur == plexamp ]] && d=p; [[ $cur == bluos ]] && d=b
+    cur="${STYPE[$k]}"; d=n; [[ $cur == plexamp ]] && d=p; [[ $cur == bluos ]] && d=b; [[ $cur == wiim ]] && d=w; [[ $cur == roon ]] && d=r
     while :; do
-      printf '  %-9s [p/b/n] [%s]: ' "$(slot_label "$k")" "$d" >&2; read -r a || true; a="${a:-$d}"; a="${a,,}"
+      printf '  %-9s [p/b/w/r/n] [%s]: ' "$(slot_label "$k")" "$d" >&2; read -r a || true; a="${a:-$d}"; a="${a,,}"
       case $a in
         p|plexamp) STYPE[$k]=plexamp; ask_def="${SURL[$k]}"; q="Plexamp/Caldera address (e.g. 192.168.1.105 or 192.168.1.105:32500)"; break ;;
         b|bluos)   STYPE[$k]=bluos;   ask_def="${SURL[$k]}"; q="BluOS player IP address (e.g. 192.168.1.50; the output is asked next)"; break ;;
+        w|wiim)    STYPE[$k]=wiim;    ask_def="${SURL[$k]}"; q="WiiM player IP address (e.g. 192.168.1.113)"; break ;;
+        r|roon)    STYPE[$k]=roon;    ask_def="${SURL[$k]}"; q="Roon zone name, exactly as Roon shows it (e.g. Living Room)"; break ;;
         n|none)    STYPE[$k]=none; SURL[$k]=""; q=""; break ;;
-        *) echo "    Please answer p, b or n." >&2 ;;
+        *) echo "    Please answer p, b, w, r or n." >&2 ;;
       esac
     done
     if [[ -n ${q-} ]]; then
@@ -194,16 +212,24 @@ if (( ! YES )) && [[ ${#SLOT_OPTS[@]} -eq 0 ]]; then
         printf '            Which output of that device is this? 1 for most; a multi-output device has 2-8 (output N is on port 11000+10*(N-1)) [1]: ' >&2
         read -r a || true; a="${a:-1}"; SURL[$k]="${SURL[$k]}#$a"
       fi
+      if [[ ${STYPE[$k]} == bluos ]]; then
+        printf '            Also browse and play Roon from this slot? Roon zone name for this player, - for none%s: ' "${ROONZ[$k]:+ [${ROONZ[$k]}]}" >&2
+        read -r a || true; a="${a:-${ROONZ[$k]}}"; [[ $a == - ]] && a=""; ROONZ[$k]="$a"
+      fi
     fi
     q=""
   done
 fi
 
-NPLEX=0; NBLU=0; USED=0
+NPLEX=0; NBLU=0; NWIIM=0; NROON=0; USED=0
+trim() { local v="$1"; v="${v#"${v%%[![:space:]]*}"}"; printf '%s' "${v%"${v##*[![:space:]]}"}"; }
 for k in "${SLOT_KEYS[@]}"; do
+  [[ ${STYPE[$k]} == bluos ]] || ROONZ[$k]=""; ROONZ[$k]="$(trim "${ROONZ[$k]}")"; [[ -z ${ROONZ[$k]} ]] || NROON=$((NROON+1))
   case ${STYPE[$k]} in
     plexamp) SURL[$k]="$(norm_url "${SURL[$k]}" 32500)"; NPLEX=$((NPLEX+1)); USED=$((USED+1)) ;;
     bluos)   SURL[$k]="$(bluos_url "${SURL[$k]}")"; NBLU=$((NBLU+1)); USED=$((USED+1)) ;;
+    wiim)    SURL[$k]="$(wiim_url "${SURL[$k]}")"; NWIIM=$((NWIIM+1)); USED=$((USED+1)) ;;
+    roon)    SURL[$k]="$(trim "${SURL[$k]}")"; NROON=$((NROON+1)); USED=$((USED+1)) ;;      # a zone name keeps its spaces
   esac
 done
 (( USED )) || warn "No slot is configured: every player will show \"Not configured\" (you can re-run this later)."
@@ -294,6 +320,16 @@ for k in "${SLOT_KEYS[@]}"; do
         pname="$(printf '%s' "$out" | grep -o ' name="[^"]*"' | head -1 | sed 's/^ name="//; s/"$//' || true)"
         ok "$(slot_label "$k"): BluOS player${pname:+ \"$pname\"} reachable at ${SURL[$k]}"
       else warn "$(slot_label "$k"): no BluOS player answered at ${SURL[$k]}/SyncStatus"; PROBLEMS=1; fi ;;
+    wiim) # newer firmware answers on HTTPS (self-signed certificate), older on plain HTTP
+      h="${SURL[$k]#http://}"; h="${h#https://}"; out=""
+      for sch in https http; do
+        out="$(curl -sSk -m 6 "$sch://$h/httpapi.asp?command=getStatusEx" 2>/dev/null || true)"
+        [[ $out == *DeviceName* || $out == *'"uuid"'* ]] && break
+      done
+      if [[ $out == *DeviceName* || $out == *'"uuid"'* ]]; then
+        pname="$(printf '%s' "$out" | grep -o '"DeviceName" *: *"[^"]*"' | head -1 | sed 's/^[^:]*: *"//; s/"$//' || true)"
+        ok "$(slot_label "$k"): WiiM player${pname:+ \"$pname\"} reachable at ${SURL[$k]}"
+      else warn "$(slot_label "$k"): no WiiM/LinkPlay player answered at ${SURL[$k]} (tried https and http /httpapi.asp)"; PROBLEMS=1; fi ;;
   esac
 done
 if [[ $SYSTEM == custom ]]; then
@@ -309,6 +345,25 @@ fi
 (( USED )) || ok "Nothing to check"
 if (( PROBLEMS )); then confirm "Problems were found. Continue anyway?" n || die "Fix the problems above and re-run ./install.sh (your answers are not saved yet)."; fi
 
+# ------------------------------------------------------------------ Roon packages (only if a slot uses Roon)
+if (( NROON )); then
+  step "Roon support"
+  if (( DRY )); then echo "  [dry-run] would run npm install in $DIR (node-roon-api, from GitHub)"
+  else
+    NEED=(); command -v git >/dev/null || NEED+=(git); command -v npm >/dev/null || NEED+=(npm)
+    if (( ${#NEED[@]} )); then
+      warn "Roon support needs: ${NEED[*]}"
+      confirm "Install them with apt now?" y || die "Install ${NEED[*]} and re-run."
+      run sudo apt-get update -qq; run sudo apt-get install -y -qq "${NEED[@]}"
+    fi
+    npm install --omit=dev --no-audit --no-fund --prefix "$DIR" >/dev/null 2>&1 || true
+    "$NODE_BIN" -e "for (const m of ['node-roon-api','node-roon-api-transport','node-roon-api-browse','node-roon-api-image']) require(m)" 2>/dev/null \
+      || die "The Roon packages could not be installed (they come from GitHub, so the Pi needs internet and git). Try: cd $DIR && npm install"
+    ok "Roon packages installed"
+  fi
+  echo "  Zone names are not checked here; if one is wrong the slot's menu says so."
+fi
+
 # ------------------------------------------------------------------ install
 step "Installing"
 if (( DRY )); then
@@ -316,10 +371,10 @@ if (( DRY )); then
   echo "    MMS_MODEL=$MODEL MMS_HOSTNAME=$HOSTNAME_VAL"
   [[ $SYSTEM == custom ]] && echo "    MMS_SYSTEM=custom"
   (( NPLEX )) && echo "    PLEX_URL=$PLEX_URL PLEX_TOKEN=(hidden)"
-  for k in "${SLOT_KEYS[@]}"; do [[ ${STYPE[$k]} == none ]] || echo "    MMS_${k}_TYPE=${STYPE[$k]} MMS_${k}_URL=${SURL[$k]}${SMASTER[$k]:+ MMS_${k}_MASTER=${SMASTER[$k]}}"; done
+  for k in "${SLOT_KEYS[@]}"; do [[ ${STYPE[$k]} == none ]] || echo "    MMS_${k}_TYPE=${STYPE[$k]} MMS_${k}_URL=${SURL[$k]}${ROONZ[$k]:+ MMS_${k}_ROON_ZONE=${ROONZ[$k]}}${SMASTER[$k]:+ MMS_${k}_MASTER=${SMASTER[$k]}}"; done
 else
   # keep any setting this installer does not manage (e.g. MMS_DEMO, MMS_ADVERTISE_IP)
-  KEEP=""; [[ -f .env ]] && KEEP="$(grep -Ev '^(PLEX_URL|PLEX_TOKEN|MMS_MODEL|MMS_HOSTNAME|MMS_PLEXAMP_[A-D]|MMS_SYSTEM|MMS_MASTER|MMS_(MAIN|A|B|C|D|USB)_(TYPE|URL|MASTER))=' .env || true)"
+  KEEP=""; [[ -f .env ]] && KEEP="$(grep -Ev '^(PLEX_URL|PLEX_TOKEN|MMS_MODEL|MMS_HOSTNAME|MMS_PLEXAMP_[A-D]|MMS_SYSTEM|MMS_MASTER|MMS_(MAIN|A|B|C|D|USB)_(TYPE|URL|ROON_ZONE|MASTER))=' .env || true)"
   {
     printf 'MMS_MODEL=%s\nMMS_HOSTNAME=%s\n' "$MODEL" "$HOSTNAME_VAL"
     [[ $SYSTEM != custom ]] || printf 'MMS_SYSTEM=custom\n'
@@ -327,6 +382,7 @@ else
     for k in "${SLOT_KEYS[@]}"; do
       [[ ${STYPE[$k]} == none ]] || printf 'MMS_%s_TYPE=%s\nMMS_%s_URL=%s\n' "$k" "${STYPE[$k]}" "$k" "${SURL[$k]}"
       [[ $SYSTEM != custom || ${STYPE[$k]} == none ]] || printf 'MMS_%s_MASTER=%s\n' "$k" "${SMASTER[$k]}"
+      [[ -z ${ROONZ[$k]} ]] || printf 'MMS_%s_ROON_ZONE=%s\n' "$k" "${ROONZ[$k]}"
     done
     [[ -z $KEEP ]] || printf '%s\n' "$KEEP"
   } > .env.new
@@ -374,10 +430,13 @@ cat <<EOF
 Next steps:
   * In Crestron Home setup: Crestron Wired and Wi-Fi > Ethernet and Wi-Fi > scan; the MMS appears as "$HOSTNAME_VAL". Add it,
     then assign each player's output to an amplifier. After a restart allow about 2 minutes for the app to re-register the players.
-  * Power off or remove any real Mirage MMS first.
+$( (( NROON )) && printf '%s\n' '  * Roon: in Roon go to Settings > Extensions and enable "MMS Emulator" (once). Until then a Roon menu says "Waiting for Roon".' )
 Useful commands:
   ./install.sh --status                       show the service and what drives each slot
   ./install.sh --slot B=bluos:192.168.1.50    change one slot (others keep their saved settings)
+  ./install.sh --slot B=wiim:192.168.1.113    drive a slot from a WiiM (its presets are the browse list)
+  ./install.sh --slot C=roon:"Living Room"    drive a slot from a Roon zone
+  ./install.sh --roon-zone B="Living Room"    add Home Menu > Roon to a BluOS slot (--roon-zone B= removes it)
   ./install.sh --slot C=none                  stop using a slot
   sudo journalctl -u $UNIT -f                 live log
   ./install.sh --uninstall                    remove the service

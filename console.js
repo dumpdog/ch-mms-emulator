@@ -4,8 +4,8 @@
 
 const net = require('net');
 
-const BANNER = '\r\n\r\nAutonomic Controls Media Control Server version 6.8.20260224.2 Release.\r\n' +
-  'More info found on the Web http://www.Autonomic-Controls.com\r\n\r\n' +
+const BANNER = '\r\n\r\nMMS Emulator version: 1.0 Release (unofficial).\r\n' +
+  'Independent interoperability project, not affiliated with the maker of the real MMS.\r\n\r\n' +
   "Type '?' for help or 'help <command>' for help on <command>.\r\n\r\n";
 
 function startConsole({ port, serverId, licenseSerial, getMaster, setMaster, log }) {

@@ -1,5 +1,5 @@
 [Unit]
-Description=Mirage MMS emulator for Crestron Home
+Description=MMS emulator for Crestron Home
 After=network-online.target avahi-daemon.service
 Wants=network-online.target
 

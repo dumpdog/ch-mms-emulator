@@ -1,5 +1,5 @@
 'use strict';
-// Mock-processor test: replays the add/browse sequence observed in the real MMS captures against the emulator.
+// Mock-processor test: replays the add/browse sequence of a real MMS against the emulator.
 const test = require('node:test');
 const assert = require('node:assert');
 const net = require('net');
@@ -32,7 +32,7 @@ test('discover, add, register, config, browse, play', async t => {
   assert.strictEqual(reply.length, 394);
   assert.deepStrictEqual([...reply.subarray(0, 10)], [0x15, 0, 0, 0, 1, 0x84, 0, 0, 0, 0]);
   assert.strictEqual(reply.subarray(10).toString('latin1').split('\0')[0], 'test-mms');
-  assert.match(reply.subarray(266).toString('latin1').split('\0')[0], /^AUTONOMIC-MMS-5A \[v6\.8\.20260224\.2 \(Feb 25 2026\), \*01000000[0-9A-F]{12}\]$/);
+  assert.match(reply.subarray(266).toString('latin1').split('\0')[0], /^MMS-EMULATOR-5A \[v1\.0, \*01000000[0-9A-F]{12}\]$/);
 
   // ---- 2. mock processor CIP listener
   const serials = new Map();      // join -> [texts]
@@ -63,7 +63,7 @@ test('discover, add, register, config, browse, play', async t => {
   let out = ''; con.on('data', d => (out += d));
   await wait(() => out.includes('Server=') && out.endsWith(BANNER_END));
   assert.strictEqual(out.length, 228);                       // same length as the real MMS banner (12-char server id)
-  assert.match(out, /Autonomic Controls Media Control Server version 6\.8\.20260224\.2 Release\./);
+  assert.match(out, /MMS Emulator version: 1\.0 Release \(unofficial\)\./);
   const cmd = async c => { const n = out.length; con.write(c + '\r\n'); await wait(() => out.length > n && out.endsWith('\r\n')); return out.slice(n).trim(); };
   assert.match(await cmd('getlicensemessage'), /^LicenseMessage "Licensed for general PolyTune streaming use by eSeries ES\.  Serial number: [0-9a-f-]{36}"$/);
   assert.strictEqual(await cmd('ipt'), 'No Entries');
@@ -85,7 +85,7 @@ test('discover, add, register, config, browse, play', async t => {
   // ---- 5. config strings
   const lastOn = (j, pred) => wait(() => (serials.get(j) || []).find(pred));
   cipConn.write(serialFrame(12, 'Global:ProvidersList'));
-  assert.match(await lastOn(12, s => s.startsWith('[Providers,')), /^\[Providers,1\|\|My Music,MyMusic,http:\/\/127\.0\.0\.1:\d+\/getart\?guid=0{8}-0{4}-0{4}-0{4}-0{12}&h=500&w=500&c=1&fmt=png&ext=\.png,1\]$/);
+  assert.match(await lastOn(12, s => s.startsWith('[Providers,')), /^\[Providers,1\|\|[^,]+,MyMusic,http:\/\/127\.0\.0\.1:\d+\/getart\?guid=0{8}-0{4}-0{4}-0{4}-0{12}&h=500&w=500&c=1&fmt=png&ext=\.png,1\]$/);
   cipConn.write(serialFrame(12, 'Global:AccountsList'));
   await lastOn(12, s => s === '[Accounts,0||]');
   cipConn.write(serialFrame(12, 'Select:MyMusic'));

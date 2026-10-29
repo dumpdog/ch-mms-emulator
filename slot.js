@@ -57,7 +57,10 @@ class Slot extends EventEmitter {
   }
 
   async start() {
-    this.menu = await new Menu(await this.backend.home()).init();
+    let home;
+    try { home = await this.backend.home(); }
+    catch (e) { this.log(`${this.name}: unavailable, restart the service once the player is reachable (${e.message})`); home = { title: 'Unavailable', items: [] }; }
+    this.menu = await new Menu(home).init();
     this.server = net.createServer(sock => this._onConnection(sock));
     return new Promise((resolve, reject) => {
       this.server.once('error', reject);

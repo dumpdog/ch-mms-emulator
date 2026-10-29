@@ -1,6 +1,6 @@
 'use strict';
-// Autonomic Mirage MMS emulator: discovery (UDP 41794) + console (TCP 5004) + outbound CIP client + per-slot CRPC servers.
-// Flow (from the captures): processor scans -> we answer -> processor runs `addmaster <ipid> <host> <port>` on the console
+// MMS emulator: discovery (UDP 41794) + console (TCP 5004) + outbound CIP client + per-slot CRPC servers.
+// Flow: processor scans -> we answer -> processor runs `addmaster <ipid> <host> <port>` on the console
 // -> we dial out to the processor's CIP port, register as that IP-ID, publish direct-connect addresses and config strings
 // -> the processor connects to our per-slot CRPC ports and browses.
 
@@ -27,13 +27,18 @@ const localIp = () => {
   return '127.0.0.1';
 };
 
+// Crestron shows "<output label> <provider description>" on its Services screen. It drops a provider with an empty description and,
+// once trimmed, an empty name falls back to "Dynamic Media Source ID #n", so the default is U+00AD (soft hyphen): a Latin-1 character that Crestron
+// does not trim and a font draws as nothing (U+0080 showed as a square on the touch panel); needs the one-byte Latin-1 encoding in cip.js. MMS_PROVIDER_LABEL overrides it with visible text.
+const providerLabel = v => ((v ?? '').trim() && (v ?? '').trim().toLowerCase() !== 'none' ? v.trim() : '­');
+
 async function startEmulator(cfg) {
   const log = cfg.log || (() => {});
   const names = MODELS[cfg.model];
   if (!names) throw new Error(`unsupported model ${cfg.model}`);
   const hostname = cfg.hostname;
   const serverId = cfg.serverId || crypto.createHash('sha1').update(hostname).digest('hex').slice(0, 12).toUpperCase();
-  const description = `AUTONOMIC-MMS-${cfg.model} [v6.8.20260224.2 (Feb 25 2026), *01000000${serverId}]`;
+  const description = `MMS-EMULATOR-${cfg.model} [v1.0, *01000000${serverId}]`;
   const licenseSerial = cfg.licenseSerial || crypto.createHash('sha1').update('lic' + hostname).digest('hex').replace(/^(.{8})(.{4})(.{4})(.{4})(.{12}).*$/, '$1-$2-$3-$4-$5');
 
   let master = null, advertisedIp = cfg.advertiseIp || null;
@@ -78,7 +83,8 @@ async function startEmulator(cfg) {
   const ser = (c, join, text) => send(c, serialFrame(join, text));
   const dig = (c, join, v) => send(c, digitalFrame(join, v));
 
-  const providers = () => `[Providers,1||My Music,MyMusic,http://${advertise().httpHost}/getart?guid=${NIL_GUID}&h=500&w=500&c=1&fmt=png&ext=.png,1]`;
+  const label = providerLabel(cfg.providerLabel);
+  const providers = () => `[Providers,1||${label},MyMusic,http://${advertise().httpHost}/getart?guid=${NIL_GUID}&h=500&w=500&c=1&fmt=png&ext=.png,1]`;
   const currentProvider = s => `[CurrentProvider||${s.cur.name},${s.cur.idx}]`;
 
   function publishAll(c) {
@@ -205,4 +211,4 @@ async function startEmulator(cfg) {
   };
 }
 
-module.exports = { startEmulator, MODELS };
+module.exports = { startEmulator, MODELS, providerLabel };

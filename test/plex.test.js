@@ -55,8 +55,7 @@ test('browse albums, play a track, track state, thumbs', async t => {
   const patches = []; be.player.on('state', p => patches.push(p));
 
   const menu = await new Menu(await be.home()).init();
-  assert.strictEqual(menu.props.Title, 'Home Menu');
-  await menu.select(1);                                                               // My Music
+  assert.strictEqual(menu.props.Title, 'Home Menu');                                  // the home menu is the library list itself
   assert.deepStrictEqual((await menu.data(1, 10)).map(r => r.L1), ['Playlists', 'Albums', 'Artists', 'Recently Added', 'Recently Played', 'Songs', 'Search']);
   await menu.select(2);                                                               // Albums
   assert.strictEqual(menu.props.ItemCnt, 2);
@@ -149,7 +148,6 @@ test('search by letter: kind -> letter index -> items', async t => {
   const be = createPlexBackend({ plexUrl: m.url, token: 'SECRET', plexampUrl: m.url, name: 'Player A', log: () => {}, pollMs: 50 });
   t.after(() => be.close());
   const menu = await new Menu(await be.home()).init();
-  await menu.select(1);                                                               // My Music
   await menu.select(7);                                                               // Search
   assert.deepStrictEqual((await menu.data(1, 10)).map(r => r.L1), ['Artists by letter', 'Albums by letter', 'Songs by letter']);
   await menu.select(2);                                                               // Albums by letter

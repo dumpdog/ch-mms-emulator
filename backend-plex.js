@@ -211,7 +211,7 @@ function createPlexBackend({ plexUrl, token, plexampUrl, name = 'MMS', log, poll
   const songItem = t => item(t, { play: () => playKey(`/library/metadata/${t.ratingKey}`), context: () => choose2(t.title, `/library/metadata/${t.ratingKey}`, ['Play now', () => playKey(`/library/metadata/${t.ratingKey}`)]) });
 
   const lib = sub => `/library/sections/${section}/${sub}`;
-  const myMusic = () => ({ title: 'My Music', items: [
+  const homeMenu = () => ({ title: 'Home Menu', items: [
     { l1: 'Playlists', open: () => paged('Playlists', '/playlists?playlistType=audio', playlistItem) },
     { l1: 'Albums', open: () => paged('Albums', lib('albums?sort=titleSort'), albumItem) },
     { l1: 'Artists', open: () => paged('Artists', lib('all?type=8&sort=titleSort'), artistItem) },
@@ -280,7 +280,7 @@ function createPlexBackend({ plexUrl, token, plexampUrl, name = 'MMS', log, poll
 
   return {
     providerName: 'Plex', favorites, quickList, search,
-    async home() { await init(); return { title: 'Home Menu', items: [{ l1: 'My Music', open: myMusic }] }; },
+    async home() { await init(); return homeMenu(); },
     player,
     async art(guid) {
       const p = dec(guid); if (!p) return null;

@@ -1,5 +1,5 @@
 'use strict';
-// CIP framing + join helpers and the CRPC serial chunk codec, as seen in the Mirage MMS captures (see mms-research/).
+// CIP framing + join helpers and the CRPC serial chunk codec, as seen in the MMS captures (see mms-research/).
 //   frame   = type(1) len(2 BE) payload
 //   serial  = 0x12, payload 00 00 00 <len+4 as u32> 34 <join-1 u16 BE> 03 <text>
 //   digital = 0x05, payload 00 00 03 00 <join-1 lo> <join-1 hi | 0x80 when low>
@@ -28,7 +28,8 @@ class Deframer {
 }
 
 function serialFrame(join, text) {
-  const t = Buffer.from(text, 'utf8');
+  // Crestron reads these strings one byte per character, so text that fits Latin-1 goes out that way (UTF-8 shows as "â" etc.)
+  const t = Buffer.from(text, /^[\x00-\xff]*$/.test(text) ? 'latin1' : 'utf8');
   const p = Buffer.alloc(8 + t.length);
   p.writeUInt32BE(t.length + 4, 0); p[4] = 0x34; p.writeUInt16BE(join - 1, 5); p[7] = 0x03;
   t.copy(p, 8);

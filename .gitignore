@@ -5,3 +5,4 @@ node_modules/
 state.json
 *.log
 state-probe.json
+roon-state.json
