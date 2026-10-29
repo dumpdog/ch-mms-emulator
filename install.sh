@@ -419,7 +419,7 @@ if [[ $SYSTEM == bridge ]]; then
 PI_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 cat <<EOF
 Next steps (processor bridge):
-  * In the SIMPL program, PlexampZone.usp must have PLEX_HOST "${PI_IP:-this Pi's IP}" and PLEX_PORT 41810 + the slot (Main 0, A 1, B 2, C 3, D 4, USB 5; Player A = 41811).
+  * In the SIMPL program, PlexampZone.usp must have PLEX_HOST set to ${PI_IP:-this Pi} and PLEX_PORT 41810 + the slot (Main 0, A 1, B 2, C 3, D 4, USB 5; Player A = 41811).
     The processor dials this Pi: nothing to scan or add here.
   * Allow from the processor and the panels: tcp 41810+slot (module), tcp 41798+slot (direct connect), tcp 80 (artwork).
 Useful commands:
