@@ -1,0 +1,343 @@
+/*******************************************************************************************
+  PlexampDeviceModule: drop-in for RoonDeviceModule's SIMPL+ part (same signals, same order).
+  Instead of the Roon library it talks to the MMS emulator's processor bridge (MMS_SYSTEM=bridge, tcp 41810+slot)
+  over one TCP connection. CRPC strings pass through untouched; the other joins use short text lines:
+    module -> emulator   CMD <name> [arg]
+    emulator -> module   FB <name> <value>
+*******************************************************************************************/
+#DEFAULT_VOLATILE
+#ENABLE_STACK_CHECKING
+#ENABLE_TRACE
+#SYMBOL_NAME "PlexampDeviceModuleSPlus"
+#HINT "Plexamp zone through the MMS emulator bridge"
+
+// Test drop-in: save as devicemodule.usp in a COPY of the program folder. Every RoonDeviceModule zone then talks to this Pi slot.
+#DEFINE_CONSTANT PLEX_HOST "192.168.1.100"
+#DEFINE_CONSTANT PLEX_PORT 41811   // 41810 + slot (Main 0, Player A 1, B 2, C 3, D 4, USB 5)
+
+TCP_CLIENT client[65534];
+STRING rx[65534];
+INTEGER connected;
+
+
+DIGITAL_INPUT Ready;
+DIGITAL_INPUT StandBy;
+DIGITAL_INPUT ConvenienceSwitch;
+DIGITAL_INPUT Play;
+DIGITAL_INPUT Pause;
+DIGITAL_INPUT PlayPause;
+DIGITAL_INPUT Next;
+DIGITAL_INPUT Previous;
+DIGITAL_INPUT Stop;
+DIGITAL_INPUT SetShuffleOn;
+DIGITAL_INPUT SetShuffleOff;
+DIGITAL_INPUT SetLoop;
+DIGITAL_INPUT SetLoopOne;
+DIGITAL_INPUT SetLoopOff;
+DIGITAL_INPUT ToggleShuffle;
+DIGITAL_INPUT ToggleLoop;
+DIGITAL_INPUT SetAutoRadioOn;
+DIGITAL_INPUT SetAutoRadioOff;
+DIGITAL_INPUT ToggleAutoRadio;
+DIGITAL_INPUT VolumeUp;
+DIGITAL_INPUT VolumeDown;
+DIGITAL_INPUT Mute;
+DIGITAL_INPUT Unmute;
+DIGITAL_INPUT ToggleMute;
+DIGITAL_OUTPUT IsAvailable_fb;
+DIGITAL_OUTPUT SupportsStandby_fb;
+DIGITAL_OUTPUT SupportsConvenienceSwitch_fb;
+DIGITAL_OUTPUT Playing_fb;
+DIGITAL_OUTPUT Paused_fb;
+DIGITAL_OUTPUT Loading_fb;
+DIGITAL_OUTPUT Stopped_fb;
+DIGITAL_OUTPUT IsNextAllowed_fb;
+DIGITAL_OUTPUT IsPreviousAllowed_fb;
+DIGITAL_OUTPUT IsPauseAllowed_fb;
+DIGITAL_OUTPUT IsSeekallowed_fb;
+DIGITAL_OUTPUT IsPlayAllowed_fb;
+DIGITAL_OUTPUT IsVolumeFixed_fb;
+DIGITAL_OUTPUT ShowSeekPosition_fb;
+DIGITAL_OUTPUT ShowLength_fb;
+DIGITAL_OUTPUT IsShuffle_fb;
+DIGITAL_OUTPUT IsLoop_fb;
+DIGITAL_OUTPUT IsLoopOne_fb;
+DIGITAL_OUTPUT IsAutoRadio_fb;
+DIGITAL_OUTPUT IsMuted_fb;
+ANALOG_INPUT Seek;
+ANALOG_INPUT SeekNormalized;
+ANALOG_INPUT Volume;
+ANALOG_INPUT VolumeNormalized;
+ANALOG_OUTPUT LengthSeconds_fb;
+ANALOG_OUTPUT PositionSeconds_fb;
+ANALOG_OUTPUT PositionNormalized_fb;
+ANALOG_OUTPUT VolumeMin_fb;
+ANALOG_OUTPUT VolumeMax_fb;
+ANALOG_OUTPUT Volume_fb;
+ANALOG_OUTPUT VolumeNormalized_fb;
+STRING_INPUT CRPC[65534];
+STRING_OUTPUT Name_fb;
+STRING_OUTPUT OneLine_fb;
+STRING_OUTPUT TwoLine_Line1_fb;
+STRING_OUTPUT TwoLine_Line2_fb;
+STRING_OUTPUT ThreeLine_Line1_fb;
+STRING_OUTPUT ThreeLine_Line2_fb;
+STRING_OUTPUT ThreeLine_Line3_fb;
+STRING_OUTPUT LengthSerial_fb;
+STRING_OUTPUT PositionSerial_fb;
+STRING_OUTPUT NowPlayingImageUrl_fb;
+STRING_OUTPUT PlayBackError_fb;
+STRING_OUTPUT VolumeType_fb;
+STRING_OUTPUT CRPC_fb;
+
+Function SendCmd(STRING s)
+{
+    If (connected)
+        SocketSend(client, s + "
+");
+}
+
+
+PUSH Play { SendCmd("Play"); }
+PUSH Pause { SendCmd("Pause"); }
+PUSH PlayPause { SendCmd("PlayPause"); }
+PUSH Next { SendCmd("Next"); }
+PUSH Previous { SendCmd("Previous"); }
+PUSH Stop { SendCmd("Stop"); }
+PUSH SetShuffleOn { SendCmd("ShuffleOn"); }
+PUSH SetShuffleOff { SendCmd("ShuffleOff"); }
+PUSH SetLoop { SendCmd("Loop"); }
+PUSH SetLoopOne { SendCmd("LoopOne"); }
+PUSH SetLoopOff { SendCmd("LoopOff"); }
+PUSH ToggleShuffle { SendCmd("ToggleShuffle"); }
+PUSH ToggleLoop { SendCmd("ToggleLoop"); }
+CHANGE Seek { SendCmd("Seek " + ITOA(Seek)); }
+CHANGE SeekNormalized { SendCmd("SeekNorm " + ITOA(SeekNormalized)); }
+
+CHANGE CRPC
+{
+    If (connected)
+        SocketSend(client, CRPC);
+}
+
+// "FB <name> <value>" from the emulator
+Function Feedback(STRING key, STRING val)
+{
+
+    If (key = "Available")
+    {
+        IsAvailable_fb = ATOI(val);
+    }
+    Else If (key = "Playing")
+    {
+        Playing_fb = ATOI(val);
+    }
+    Else If (key = "Paused")
+    {
+        Paused_fb = ATOI(val);
+    }
+    Else If (key = "Loading")
+    {
+        Loading_fb = ATOI(val);
+    }
+    Else If (key = "Stopped")
+    {
+        Stopped_fb = ATOI(val);
+    }
+    Else If (key = "NextAllowed")
+    {
+        IsNextAllowed_fb = ATOI(val);
+    }
+    Else If (key = "PreviousAllowed")
+    {
+        IsPreviousAllowed_fb = ATOI(val);
+    }
+    Else If (key = "PauseAllowed")
+    {
+        IsPauseAllowed_fb = ATOI(val);
+    }
+    Else If (key = "SeekAllowed")
+    {
+        IsSeekallowed_fb = ATOI(val);
+    }
+    Else If (key = "PlayAllowed")
+    {
+        IsPlayAllowed_fb = ATOI(val);
+    }
+    Else If (key = "VolumeFixed")
+    {
+        IsVolumeFixed_fb = ATOI(val);
+    }
+    Else If (key = "ShowSeek")
+    {
+        ShowSeekPosition_fb = ATOI(val);
+    }
+    Else If (key = "ShowLength")
+    {
+        ShowLength_fb = ATOI(val);
+    }
+    Else If (key = "Shuffle")
+    {
+        IsShuffle_fb = ATOI(val);
+    }
+    Else If (key = "Loop")
+    {
+        IsLoop_fb = ATOI(val);
+    }
+    Else If (key = "LoopOne")
+    {
+        IsLoopOne_fb = ATOI(val);
+    }
+    Else If (key = "AutoRadio")
+    {
+        IsAutoRadio_fb = ATOI(val);
+    }
+    Else If (key = "Muted")
+    {
+        IsMuted_fb = ATOI(val);
+    }
+    Else If (key = "LengthSeconds")
+    {
+        LengthSeconds_fb = ATOI(val);
+    }
+    Else If (key = "PositionSeconds")
+    {
+        PositionSeconds_fb = ATOI(val);
+    }
+    Else If (key = "PositionNormalized")
+    {
+        PositionNormalized_fb = ATOI(val);
+    }
+    Else If (key = "Name")
+    {
+        Name_fb = val;
+    }
+    Else If (key = "OneLine")
+    {
+        OneLine_fb = val;
+    }
+    Else If (key = "Title")
+    {
+        TwoLine_Line1_fb = val;
+        ThreeLine_Line1_fb = val;
+    }
+    Else If (key = "Artist")
+    {
+        TwoLine_Line2_fb = val;
+        ThreeLine_Line2_fb = val;
+    }
+    Else If (key = "Album")
+    {
+        ThreeLine_Line3_fb = val;
+    }
+    Else If (key = "LengthSerial")
+    {
+        LengthSerial_fb = val;
+    }
+    Else If (key = "PositionSerial")
+    {
+        PositionSerial_fb = val;
+    }
+    Else If (key = "Art")
+    {
+        NowPlayingImageUrl_fb = val;
+    }
+    Else If (key = "Error")
+    {
+        PlayBackError_fb = val;
+    }
+    Else If (key = "VolumeType")
+    {
+        VolumeType_fb = val;
+    }
+}
+
+SOCKETCONNECT client
+{
+    connected = 1;
+    rx = "";
+}
+
+SOCKETDISCONNECT client
+{
+    connected = 0;
+    IsAvailable_fb = 0;
+    Playing_fb = 0;
+    Paused_fb = 0;
+}
+
+SOCKETRECEIVE client
+{
+    INTEGER n, total, p, done;
+    STRING line[512], key[64], val[512];
+
+    rx = rx + client.SocketRxBuf;
+    ClearBuffer(client.SocketRxBuf);
+    done = 0;
+    While (Len(rx) > 0 && !done)
+    {
+        If (Left(rx, 2) = "2F")
+        {
+            // CRPC chunk: 2F Fc|Fe <4 hex length> <text>; hand the whole chunk to the Smart Object
+            If (Len(rx) < 8)
+                done = 1;
+            Else
+            {
+                n = HexToI(Mid(rx, 5, 4));
+                total = 8 + n;
+                If (Len(rx) < total)
+                    done = 1;
+                Else
+                {
+                    CRPC_fb = Left(rx, total);
+                    rx = Right(rx, Len(rx) - total);
+                }
+            }
+        }
+        Else
+        {
+            p = Find("
+", rx);
+            If (p = 0)
+                done = 1;
+            Else
+            {
+                line = Left(rx, p - 1);
+                rx = Right(rx, Len(rx) - p);
+                If (Left(line, 3) = "FB ")
+                {
+                    line = Right(line, Len(line) - 3);
+                    p = Find(" ", line);
+                    If (p > 0)
+                    {
+                        key = Left(line, p - 1);
+                        val = Right(line, Len(line) - p);
+                    }
+                    Else
+                    {
+                        key = line;
+                        val = "";
+                    }
+                    // drop a trailing CR
+                    If (Len(val) > 0 && Right(val, 1) = "")
+                        val = Left(val, Len(val) - 1);
+                    Feedback(key, val);
+                }
+            }
+        }
+    }
+}
+
+Function Main()
+{
+    connected = 0;
+    WaitForInitializationComplete();
+    While (1)
+    {
+        If (SocketGetStatus(client) <> 2)
+        {
+            SocketConnectClient(client, PLEX_HOST, PLEX_PORT, 0);
+        }
+        Delay(500);
+    }
+}
