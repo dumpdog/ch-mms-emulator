@@ -40,7 +40,7 @@ function startBridge({ slots, base, log, onConnect }) {
         const res = await slot._dispatch(req);
         if (res) for (const ch of chunkJson(JSON.stringify(res))) send(ch);
       });
-      let last = {};
+      let last = {}, lastDiag = '';
       const push = (all, force) => {
         const now = feedback(all, JSON.stringify({ ip: [`${slot.advertise().ip}:${slot.port}`] }));   // same text the MMS published on its DirectConnectInfo join
         for (const k of Object.keys(now)) if (force || now[k] !== last[k]) send(`FB ${k} ${now[k]}\r\n`);
@@ -66,6 +66,7 @@ function startBridge({ slots, base, log, onConnect }) {
           case 'Seek': return pl.seek && run(function () { return pl.seek({ sec: Number(arg) }); });
           case 'SeekNorm': return pl.seek && p.TrackSec && run(function () { return pl.seek({ sec: Math.round(Number(arg) / 65535 * p.TrackSec) }); });
           case 'Refresh': return push(p, true);
+          case 'Diag': if (arg !== lastDiag) log(`bridge[${slot.name}]: module ${arg}`); lastDiag = arg; return;
           default: log(`bridge[${slot.name}]: ignored command ${name}`);
         }
       };
