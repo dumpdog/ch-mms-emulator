@@ -12,7 +12,7 @@ const HEAD = /^2F(Fc|Fe)([0-9A-Fa-f]{4})/;
 const fmt = s => { s = Math.max(0, Math.floor(s || 0)); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60; return `${h ? h + ':' + String(m).padStart(2, '0') : m}:${String(x).padStart(2, '0')}`; };
 
 // feedback joins derived from the slot's properties
-function feedback(p) {
+function feedback(p, direct = '') {
   const st = p.PlayerState, len = p.TrackSec || 0, pos = p.ElapsedSec || 0;
   const [a, t, al] = [p.Artist || '', p.Title || '', p.Album || ''];
   return {
@@ -24,7 +24,7 @@ function feedback(p) {
     LengthSeconds: len, PositionSeconds: pos, PositionNormalized: len ? Math.min(65535, Math.round(pos / len * 65535)) : 0,
     LengthSerial: fmt(len), PositionSerial: fmt(pos),
     OneLine: [a, t].filter(Boolean).join(' - '), Title: t, Artist: a, Album: al,
-    Art: p.AlbumArtUrl || '', Error: '', VolumeType: 'Fixed',
+    Art: p.AlbumArtUrl || '', Error: '', VolumeType: 'Fixed', DirectInfo: direct,
   };
 }
 
@@ -42,7 +42,7 @@ function startBridge({ slots, base, log, onConnect }) {
       });
       let last = {};
       const push = (all, force) => {
-        const now = feedback(all);
+        const now = feedback(all, JSON.stringify({ ip: [`${slot.advertise().ip}:${slot.port}`] }));   // same text the MMS published on its DirectConnectInfo join
         for (const k of Object.keys(now)) if (force || now[k] !== last[k]) send(`FB ${k} ${now[k]}\r\n`);
         last = now;
       };

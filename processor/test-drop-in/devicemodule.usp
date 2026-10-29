@@ -89,6 +89,7 @@ STRING_OUTPUT NowPlayingImageUrl_fb;
 STRING_OUTPUT PlayBackError_fb;
 STRING_OUTPUT VolumeType_fb;
 STRING_OUTPUT CRPC_fb;
+STRING_OUTPUT DirectConnectInfo_fb;
 
 Function SendCmd(STRING s)
 {
@@ -258,6 +259,10 @@ Function Feedback(STRING key, STRING val)
     Else If (key = "Error")
     {
         PlayBackError_fb = val;
+    }
+    Else If (key = "DirectInfo")
+    {
+        DirectConnectInfo_fb = val;
     }
     Else If (key = "VolumeType")
     {
