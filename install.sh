@@ -7,7 +7,7 @@
 # Safe to re-run: it keeps your existing answers as defaults, so re-running also applies updates after copying new files.
 #   ./install.sh [--dry-run] [--yes] [--model 5A|3E] [--slot KEY=plexamp:ADDR | KEY=bluos:ADDR[#N] | KEY=wiim:ADDR | KEY=roon:ZONE | KEY=none]...
 #                [--roon-zone KEY=ZONE]... [--plex-url URL] [--hostname NAME] [--status] [--uninstall]
-#                [--system home|custom] [--master IP[:PORT]@IPID] [--slot-master KEY=IP[:PORT]@IPID]...
+#                [--system home|custom|bridge] [--master IP[:PORT]@IPID] [--slot-master KEY=IP[:PORT]@IPID]...
 # Roon: --slot B=roon:Living Room drives a slot from that Roon zone; --roon-zone B="Living Room" on a BluOS slot adds Home Menu > Roon to it.
 # BluOS devices with several outputs: ADDR#N picks output N (port 11000 + 10*(N-1)), e.g. --slot B=bluos:192.168.1.50#2
 # Slot keys: MAIN, A, B, C, D, USB  (5A: Main, Player A-D, USB;  3E: Main, Player A, Player B).
@@ -15,6 +15,8 @@
 # Crestron Custom (SIMPL / Studio program with an Autonomic MMS symbol): the processor is configured here instead of discovered.
 # Give each used slot its processor's IP address and the hex IP-ID of its MMS symbol; slots may share one. --master sets all slots.
 # Crestron Home: a real MMS on the same network is fine (tested alongside a real MMS 3E). Custom: the IP-ID must not be in use by a real MMS.
+# --system bridge: a SIMPL+ module on the processor (processor/PlexampZone.usp, replacing one RoonDeviceModule zone) connects to this Pi on tcp 41810 + slot
+# (Main 0, A 1, B 2, ...). No discovery, console, IP-ID or processor address is needed here; the processor dials this Pi.
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -32,7 +34,7 @@ while [[ $# -gt 0 ]]; do
     --hostname) shift; HOST_OPT="${1:?--hostname needs a name}" ;;
     --uninstall) UNINSTALL=1 ;;
     --status) STATUS=1 ;;
-    --system) shift; SYSTEM_OPT="${1:?--system needs home or custom}" ;;
+    --system) shift; SYSTEM_OPT="${1:?--system needs home, custom or bridge}" ;;
     --master) shift; MASTER_OPT="${1:?--master needs IP@IPID}" ;;
     --slot-master) shift; SMASTER_OPTS+=("${1:?--slot-master needs KEY=IP@IPID}") ;;
     -h|--help) awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print } /^set -/ { exit }' "$0"; exit 0 ;;
@@ -82,7 +84,7 @@ SLOT_KEYS_5A=(MAIN A B C D USB); SLOT_KEYS_3E=(MAIN A B)
 slot_label() { case $1 in MAIN) echo Main ;; USB) echo USB ;; *) echo "Player $1" ;; esac; }
 if (( STATUS )); then
   printf '%-16s %s / %s\n' "$UNIT" "$(systemctl is-active $UNIT 2>/dev/null || true)" "$(systemctl is-enabled $UNIT 2>/dev/null || true)"
-  printf 'Model %s, hostname %s, system %s\n' "$(envget MMS_MODEL)" "$(envget MMS_HOSTNAME)" "$([[ $(envget MMS_SYSTEM) == custom ]] && echo 'Crestron Custom' || echo 'Crestron Home')"
+  printf 'Model %s, hostname %s, system %s\n' "$(envget MMS_MODEL)" "$(envget MMS_HOSTNAME)" "$(case $(envget MMS_SYSTEM) in custom) echo 'Crestron Custom' ;; bridge) echo 'processor bridge (Roon zone replacement)' ;; *) echo 'Crestron Home' ;; esac)"
   for k in "${SLOT_KEYS_5A[@]}"; do
     t="$(envget "MMS_${k}_TYPE")"; [[ -n $t ]] || { t="$([[ -n $(envget "MMS_PLEXAMP_$k") ]] && echo plexamp || echo none)"; }
     printf '  %-9s %-8s %s%s
@@ -116,28 +118,30 @@ if [[ -z $SYSTEM_OPT ]] && (( ! YES )); then
   step "Which control system will use this MMS?"
   echo "    1 = Crestron Home (the app finds the MMS by scanning and adds it)"
   echo "    2 = Crestron Custom (SIMPL / Studio program with an Autonomic MMS symbol)"
-  echo "    3 = Control4 (not supported: it uses a different protocol)"
-  d=1; [[ $SYSTEM == custom ]] && d=2
+  echo "    3 = Processor bridge (a SIMPL+ module on the processor replaces one Roon zone with a Plexamp slot on this Pi)"
+  echo "    4 = Control4 (not supported: it uses a different protocol)"
+  d=1; [[ $SYSTEM == custom ]] && d=2; [[ $SYSTEM == bridge ]] && d=3
   while :; do
-    printf '  Choose 1-3 [%s]: ' "$d" >&2; read -r a || true; a="${a:-$d}"
-    case $a in 1|2) break ;; 3) die "Control4 is not supported by this emulator." ;; *) echo "    Please answer 1, 2 or 3." >&2 ;; esac
+    printf '  Choose 1-4 [%s]: ' "$d" >&2; read -r a || true; a="${a:-$d}"
+    case $a in 1|2|3) break ;; 4) die "Control4 is not supported by this emulator." ;; *) echo "    Please answer 1, 2, 3 or 4." >&2 ;; esac
   done
-  case $a in 1) SYSTEM=home ;; 2) SYSTEM=custom ;; esac
+  case $a in 1) SYSTEM=home ;; 2) SYSTEM=custom ;; 3) SYSTEM=bridge ;; esac
 fi
 case ${SYSTEM,,} in
   home|crestron-home) SYSTEM=home ;;
   custom|crestron-custom) SYSTEM=custom ;;
+  bridge|processor-bridge) SYSTEM=bridge ;;
   control4|c4) die "Control4 is not supported by this emulator (it uses a different protocol)." ;;
-  *) die "--system must be home or custom (got '$SYSTEM')." ;;
+  *) die "--system must be home, custom or bridge (got '$SYSTEM')." ;;
 esac
-ok "System: $([[ $SYSTEM == custom ]] && echo 'Crestron Custom' || echo 'Crestron Home')"
+ok "System: $(case $SYSTEM in custom) echo 'Crestron Custom' ;; bridge) echo 'processor bridge (Roon zone replacement)' ;; *) echo 'Crestron Home' ;; esac)"
 
 # ------------------------------------------------------------------ prerequisites
 step "Checking prerequisites"
 PKGS=()
 command -v node >/dev/null || PKGS+=(nodejs)
 command -v curl >/dev/null || PKGS+=(curl)
-[[ $SYSTEM == custom ]] || [[ -x /usr/sbin/avahi-daemon ]] || command -v avahi-daemon >/dev/null || PKGS+=(avahi-daemon)   # Crestron Home resolves this Pi's name via mDNS; Custom dials by IP
+[[ $SYSTEM != home ]] || [[ -x /usr/sbin/avahi-daemon ]] || command -v avahi-daemon >/dev/null || PKGS+=(avahi-daemon)   # Crestron Home resolves this Pi's name via mDNS; Custom dials by IP
 if (( ${#PKGS[@]} )); then
   warn "Missing packages: ${PKGS[*]}"
   confirm "Install them with apt now?" y || die "Install ${PKGS[*]} and re-run."
@@ -158,7 +162,7 @@ if [[ -z $MODEL_OPT && -z $(envget MMS_MODEL) ]] && (( ! YES )); then
 fi
 case $MODEL in 5A) SLOT_KEYS=("${SLOT_KEYS_5A[@]}") ;; 3E) SLOT_KEYS=("${SLOT_KEYS_3E[@]}") ;; *) die "Model must be 5A or 3E." ;; esac
 HOSTNAME_VAL="${HOST_OPT:-$(envget MMS_HOSTNAME)}"; HOSTNAME_VAL="${HOSTNAME_VAL:-$(hostname)}"
-if [[ $SYSTEM == custom ]]; then ok "Model $MODEL (a Custom program addresses it by IP; the host name \"$HOSTNAME_VAL\" is not used)"
+if [[ $SYSTEM != home ]]; then ok "Model $MODEL (the processor addresses it by IP; the host name \"$HOSTNAME_VAL\" is not used)"
 else ok "Model $MODEL, announced as host name \"$HOSTNAME_VAL\" (the Crestron processor must be able to resolve it; mDNS \"$HOSTNAME_VAL.local\" via avahi works)"; fi
 
 # ------------------------------------------------------------------ per-slot choice
@@ -369,7 +373,7 @@ step "Installing"
 if (( DRY )); then
   echo "  [dry-run] would write .env (mode 600):"
   echo "    MMS_MODEL=$MODEL MMS_HOSTNAME=$HOSTNAME_VAL"
-  [[ $SYSTEM == custom ]] && echo "    MMS_SYSTEM=custom"
+  [[ $SYSTEM == home ]] || echo "    MMS_SYSTEM=$SYSTEM"
   (( NPLEX )) && echo "    PLEX_URL=$PLEX_URL PLEX_TOKEN=(hidden)"
   for k in "${SLOT_KEYS[@]}"; do [[ ${STYPE[$k]} == none ]] || echo "    MMS_${k}_TYPE=${STYPE[$k]} MMS_${k}_URL=${SURL[$k]}${ROONZ[$k]:+ MMS_${k}_ROON_ZONE=${ROONZ[$k]}}${SMASTER[$k]:+ MMS_${k}_MASTER=${SMASTER[$k]}}"; done
 else
@@ -377,7 +381,7 @@ else
   KEEP=""; [[ -f .env ]] && KEEP="$(grep -Ev '^(PLEX_URL|PLEX_TOKEN|MMS_MODEL|MMS_HOSTNAME|MMS_PLEXAMP_[A-D]|MMS_SYSTEM|MMS_MASTER|MMS_(MAIN|A|B|C|D|USB)_(TYPE|URL|ROON_ZONE|MASTER))=' .env || true)"
   {
     printf 'MMS_MODEL=%s\nMMS_HOSTNAME=%s\n' "$MODEL" "$HOSTNAME_VAL"
-    [[ $SYSTEM != custom ]] || printf 'MMS_SYSTEM=custom\n'
+    [[ $SYSTEM == home ]] || printf 'MMS_SYSTEM=%s\n' "$SYSTEM"
     (( NPLEX )) && printf 'PLEX_URL=%s\nPLEX_TOKEN=%s\n' "$PLEX_URL" "$PLEX_TOKEN"
     for k in "${SLOT_KEYS[@]}"; do
       [[ ${STYPE[$k]} == none ]] || printf 'MMS_%s_TYPE=%s\nMMS_%s_URL=%s\n' "$k" "${STYPE[$k]}" "$k" "${SURL[$k]}"
@@ -411,6 +415,20 @@ if (( ! DRY )); then
 fi
 
 step "Done"
+if [[ $SYSTEM == bridge ]]; then
+PI_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+cat <<EOF
+Next steps (processor bridge):
+  * In the SIMPL program, PlexampZone.usp must have PLEX_HOST "${PI_IP:-this Pi's IP}" and PLEX_PORT 41810 + the slot (Main 0, A 1, B 2, C 3, D 4, USB 5; Player A = 41811).
+    The processor dials this Pi: nothing to scan or add here.
+  * Allow from the processor and the panels: tcp 41810+slot (module), tcp 41798+slot (direct connect), tcp 80 (artwork).
+Useful commands:
+  ./install.sh --status                       show the service and what drives each slot
+  sudo journalctl -u $UNIT -f                 live log (a line "bridge[Player A]: module connected from <processor>" means it works)
+  ./install.sh --uninstall                    remove the service
+EOF
+exit 0
+fi
 if [[ $SYSTEM == custom ]]; then
 PI_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 cat <<EOF
