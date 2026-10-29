@@ -71,6 +71,7 @@ function startBridge({ slots, base, log, onConnect }) {
       };
       let buf = '';
       sock.on('data', d => {
+        if (process.env.MMS_CIP_TRACE) log(`bridge[${slot.name}]: rx ${d.length} chars: ${JSON.stringify(d.slice(0, 240))}`);
         buf += d;
         for (;;) {
           if (buf.startsWith('2F')) {   // a CRPC chunk: header says how much follows
@@ -79,7 +80,7 @@ function startBridge({ slots, base, log, onConnect }) {
             if (buf.length < total) break;
             reader.push(buf.slice(0, total)); buf = buf.slice(total);
           } else {
-            const i = buf.search(/[\r\n]/); if (i < 0) { if (buf.length > 4096) buf = ''; break; }
+            const i = buf.search(/[\r\n]/); if (i < 0) { if (buf.length > 4096) { log(`bridge[${slot.name}]: dropped ${buf.length} chars with no line end: ${JSON.stringify(buf.slice(0, 80))}`); buf = ''; } break; }
             const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
             const m = /^CMD (\S+)(?: (.*))?$/.exec(line);
             if (m) command(m[1], m[2]); else if (line) log(`bridge[${slot.name}]: ignored '${line.slice(0, 60)}'`);
