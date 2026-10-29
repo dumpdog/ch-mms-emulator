@@ -119,7 +119,7 @@ SIMPL+ module with the same signals in the same order, but it talks to this emul
 On the processor: in the Roon `.umc`, point its SIMPL+ symbol at `PlexampDeviceModule.usp` (Save As a new `.umc`; the signals line up one to one),
 set the module's `Host` (the Pi) and `Port` parameters, and put that module in place of the zone. The module forwards the `CRPC` string joins untouched
 (the Smart Object's Crpc.Register is answered by the emulator, which points it at the slot's direct-connect port) and carries the button and feedback joins as
-`CMD <name> [arg]` / `FB <name> <value>` lines. Status: the emulator side is tested against a mock module; the SIMPL+ file has not been compiled or run on a processor.
+`CMD <name> [arg]` / `FB <name> <value>` lines. Status: the emulator side is tested against a mock module; the SIMPL+ file compiles cleanly (SPlusCC, 3- and 4-Series, 0 errors) but has not been run on a processor.
 `MMS_CIP_TRACE=1` logs the CRPC traffic.
 
 ## Features

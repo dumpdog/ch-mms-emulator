@@ -91,9 +91,12 @@ STRING_OUTPUT CRPC_fb;
 
 Function SendCmd(STRING s)
 {
+    STRING t[300];
     If (connected)
-        SocketSend(client, s + "
-");
+    {
+        t = s + "\x0D\x0A";
+        SocketSend(client, t);
+    }
 }
 
 
@@ -110,8 +113,18 @@ PUSH SetLoopOne { SendCmd("LoopOne"); }
 PUSH SetLoopOff { SendCmd("LoopOff"); }
 PUSH ToggleShuffle { SendCmd("ToggleShuffle"); }
 PUSH ToggleLoop { SendCmd("ToggleLoop"); }
-CHANGE Seek { SendCmd("Seek " + ITOA(Seek)); }
-CHANGE SeekNormalized { SendCmd("SeekNorm " + ITOA(SeekNormalized)); }
+CHANGE Seek
+{
+    STRING t[40];
+    t = "Seek " + ITOA(Seek);
+    SendCmd(t);
+}
+CHANGE SeekNormalized
+{
+    STRING t[40];
+    t = "SeekNorm " + ITOA(SeekNormalized);
+    SendCmd(t);
+}
 
 CHANGE CRPC
 {
@@ -295,8 +308,7 @@ SOCKETRECEIVE client
         }
         Else
         {
-            p = Find("
-", rx);
+            p = Find("\x0A", rx);
             If (p = 0)
                 done = 1;
             Else
@@ -318,7 +330,7 @@ SOCKETRECEIVE client
                         val = "";
                     }
                     // drop a trailing CR
-                    If (Len(val) > 0 && Right(val, 1) = "")
+                    If (Len(val) > 0 && Right(val, 1) = "\x0D")
                         val = Left(val, Len(val) - 1);
                     Feedback(key, val);
                 }
@@ -333,7 +345,7 @@ Function Main()
     WaitForInitializationComplete();
     While (1)
     {
-        If (SocketGetStatus(client) <> 2)
+        If (!connected)
         {
             If (Len(Host) > 0 && Port > 0)
                 SocketConnectClient(client, Host, Port, 0);
