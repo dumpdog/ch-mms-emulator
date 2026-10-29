@@ -195,6 +195,7 @@ class Slot extends EventEmitter {
         if (!fn) { this.log(`${this.svc}: ${m} not implemented by backend`); return false; }
         this._busy(true);
         await menu.goto(await fn.call(this.backend));
+        this.jumped = true;   // the panel does not refetch the home list on the first Back from a Favorites/QuickList jump (blank list), see Back below
         this._busy(false);
         setTimeout(() => this._announceMenu(), 20);
         return true;
@@ -211,8 +212,16 @@ class Slot extends EventEmitter {
       case 'Search': this.log(`${this.svc}: Search ${JSON.stringify(params)}`); return true;   // no query yet: the panel follows up with Find
       case 'Create': if (!menu.top.node.create) { this.log(`${this.svc}: menu Create here has nothing to do`); return false; } return menu.create();
       case 'Advanced': case 'PlayAll': this.log(`${this.svc}: menu ${m} not implemented`); return false;
-      case 'Back': { const ok = menu.back(); if (ok) setTimeout(() => this._announceMenu(), 20); return ok; }
-      case 'BackToTop': await menu.backToTop(); setTimeout(() => this._announceMenu(), 20); return true;
+      case 'Back': {
+        const ok = menu.back();
+        if (ok) {
+          setTimeout(() => this._announceMenu(), 20);
+          if (this.jumped && menu.stack.length === 1) setTimeout(() => this._announceMenu(), 400);   // second announce: makes the panel reload the home list
+          if (menu.stack.length === 1) this.jumped = false;
+        }
+        return ok;
+      }
+      case 'BackToTop': this.jumped = false; await menu.backToTop(); setTimeout(() => this._announceMenu(), 20); return true;
       default: throw new RpcError(-32601, `The requested method ${m} was not found`);
     }
   }
