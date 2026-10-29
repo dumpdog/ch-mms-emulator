@@ -66,3 +66,18 @@ test('bridge: CRPC handshake over the module link, feedback joins, button comman
   await wait(() => be.calls.length >= 6);
   assert.deepStrictEqual(be.calls, ['play', 'next', 'shuffle', 'seek 30', 'seek 100', 'repeat']);
 });
+
+test('menu: overlapping GetData calls make one busy period', async () => {
+  const { Slot } = require('../slot');
+  const be = backend();
+  be.home = () => ({ title: 'Home Menu', items: [{ l1: 'A', play() {} }, { l1: 'B', play() {} }] });
+  const slot = new Slot({ index: 1, name: 'Main', backend: be, port: 0, advertise: () => ({ ip: '127.0.0.1', httpHost: '127.0.0.1' }), log: () => {} });
+  slot.menu = await new (require('../menu').Menu)(await be.home()).init();
+  const seen = [];
+  slot.conns.add({ _send: o => seen.push(o) });
+  await slot._call('RegisterEvent', { ev: 'BusyChanged', handle: 'h' }).catch(() => {});
+  slot.handles.set(`${slot.mid}|BusyChanged`, 'h');
+  await Promise.all([slot._menu('GetData', { item: 1, count: 2 }), slot._menu('GetData', { item: 1, count: 2 })]);
+  await new Promise(r => setImmediate(r)); await new Promise(r => setImmediate(r));
+  assert.deepStrictEqual(seen.map(o => o.params.parameters.on), [true, false]);
+});

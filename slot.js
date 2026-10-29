@@ -97,7 +97,12 @@ class Slot extends EventEmitter {
     if (!handle) return;
     for (const c of this.conns) c._send({ jsonrpc: '2.0', method: `${obj}.Event`, params: { ev, handle, parameters }, id: 1 });
   }
-  _busy(on) { this._event(this.mid, 'BusyChanged', { on, timeoutSec: on ? 4 : 0 }); }
+  // overlapping requests (a panel can ask for the same list twice at once) must look like one busy period, or the panel can lose count and stop refetching
+  _busy(on) {
+    this.busyDepth = this.busyDepth || 0;
+    if (on ? ++this.busyDepth !== 1 : (this.busyDepth > 0 && --this.busyDepth !== 0)) return;
+    this._event(this.mid, 'BusyChanged', { on, timeoutSec: on ? 4 : 0 });
+  }
 
   // ------------------------------------------------------------------ JSON-RPC
   async _dispatch(req, send) {
