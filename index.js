@@ -13,6 +13,7 @@
 //   Crestron Custom (SIMPL) instead of Crestron Home: MMS_SYSTEM=custom, MMS_MASTER=<processor ip>[:port]@<IP-ID hex> (default for every slot),
 //   MMS_<SLOT>_MASTER=... overrides it per slot; slots sharing a processor and IP-ID share one connection. No discovery or console is started.
 //   MMS_SYSTEM=bridge: a SIMPL+ module on the processor (processor/PlexampDeviceModule.usp, a drop-in for a RoonDeviceModule zone) connects to tcp MMS_BRIDGE_BASE+slot (default 41810); no CIP, IP-ID, discovery or console
+//   MMS_DIRECT_PORT_BASE (default 41798): first per-slot CRPC port; change it to run a second instance beside another one
 //   MMS_HTTP_PORT (default 80), MMS_STATE_FILE (default ./state.json), MMS_ADVERTISE_IP
 
 const os = require('os');
@@ -66,7 +67,7 @@ startEmulator({
   hostname: env.MMS_HOSTNAME || os.hostname(),
   model: env.MMS_MODEL || '5A',
   advertiseIp: env.MMS_ADVERTISE_IP, providerLabel: env.MMS_PROVIDER_LABEL,
-  discoveryPort: 41794, consolePort: 5004, directBase: 41798,
+  discoveryPort: 41794, consolePort: 5004, directBase: parseInt(env.MMS_DIRECT_PORT_BASE || '41798', 10),
   httpPort: parseInt(env.MMS_HTTP_PORT || '80', 10),
   stateFile: env.MMS_STATE_FILE || path.join(__dirname, 'state.json'),
   bridgeBase: env.MMS_SYSTEM === 'bridge' ? parseInt(env.MMS_BRIDGE_BASE || '41810', 10) : undefined,
