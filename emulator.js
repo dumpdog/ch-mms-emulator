@@ -13,6 +13,7 @@ const { T, frame, Deframer, serialFrame, parseSerial, digitalFrame, parseDigital
 const { startDiscovery } = require('./discovery');
 const { startConsole } = require('./console');
 const { Slot } = require('./slot');
+const { startBridge } = require('./bridge');
 
 const MODELS = { '3E': ['Main', 'Player A', 'Player B'], '5A': ['Main', 'Player A', 'Player B', 'Player C', 'Player D', 'USB'] };
 const NIL_GUID = '00000000-0000-0000-0000-000000000000';
@@ -194,8 +195,10 @@ async function startEmulator(cfg) {
     master = addClient(m, allSlots).m;
   }
 
-  let consoleSrv = null, disc = null;
-  if (cfg.masters && cfg.masters.length) {   // Crestron Custom: the processors are configured, there is nothing to discover or add
+  let consoleSrv = null, disc = null, bridge = null;
+  if (cfg.bridgeBase != null) {   // processor module (SIMPL+) connects to us: no discovery, console or CIP client
+    bridge = await startBridge({ slots, base: cfg.bridgeBase, log, onConnect: (n, ip) => { slotIp[n] = ip; } });
+  } else if (cfg.masters && cfg.masters.length) {   // Crestron Custom: the processors are configured, there is nothing to discover or add
     for (const m of cfg.masters) addClient({ host: m.host, port: m.port || 41794, ipid: m.ipid }, m.slots || allSlots);
   } else {
     if (cfg.stateFile && fs.existsSync(cfg.stateFile)) { try { master = JSON.parse(fs.readFileSync(cfg.stateFile, 'utf8')); } catch {} }
@@ -203,11 +206,11 @@ async function startEmulator(cfg) {
     disc = await startDiscovery({ port: cfg.discoveryPort, hostname, description, log });
     if (master) master = addClient(master, allSlots).m;
   }
-  log(`MMS-${cfg.model} '${hostname}' up: ${disc ? `discovery udp/${disc.port}, console tcp/${consoleSrv.port}` : `${clients.size} configured master(s)`}, http ${httpPort}, slots ${slots.map(s => `${s.name}:${s.port}`).join(' ')}`);
+  log(`MMS-${cfg.model} '${hostname}' up: ${disc ? `discovery udp/${disc.port}, console tcp/${consoleSrv.port}` : bridge ? `processor bridge tcp/${bridge.ports.join(',')}` : `${clients.size} configured master(s)`}, http ${httpPort}, slots ${slots.map(s => `${s.name}:${s.port}`).join(' ')}`);
 
   return {
-    slots, ports: { discovery: disc && disc.port, console: consoleSrv && consoleSrv.port, http: httpPort }, description,
-    close() { closeClients(); master = null; if (disc) disc.close(); if (consoleSrv) consoleSrv.close(); httpd.close(); slots.forEach(s => s.stop()); },
+    slots, ports: { bridge: bridge && bridge.ports, discovery: disc && disc.port, console: consoleSrv && consoleSrv.port, http: httpPort }, description,
+    close() { closeClients(); master = null; if (bridge) bridge.close(); if (disc) disc.close(); if (consoleSrv) consoleSrv.close(); httpd.close(); slots.forEach(s => s.stop()); },
   };
 }
 

@@ -107,6 +107,21 @@ Slots with the same processor and IP-ID share one connection (one symbol); diffe
 (chunked CRPC, extra menu properties, a ListChanged event); the emulator detects them from their Crpc.Register name. In SIMPL, run Project > GUI Extender
 Management > Select All > Sync > Commit or the panel Media Player area spins forever. MMS_CIP_TRACE=1 logs raw CIP and CRPC traffic.
 
+## Replacing a Roon zone with Plexamp (RoonDeviceModule drop-in)
+
+For a SIMPL program that already uses Roon's `RoonDeviceModule` zones (Media Object Router + Smart Object), `processor/PlexampDeviceModule.usp` is the same
+SIMPL+ module with the same signals in the same order, but it talks to this emulator instead of the Roon library. The rest of the program is untouched.
+
+    MMS_SYSTEM=bridge                  # no CIP client, IP-ID, discovery or console
+    MMS_B_TYPE=plexamp                 # slot -> Plexamp/Caldera as usual (MMS_B_URL, PLEX_URL, PLEX_TOKEN)
+    MMS_BRIDGE_BASE=41810              # the module connects to tcp 41810 + slot (Main 0, A 1, B 2, C 3, D 4, USB 5)
+
+On the processor: in the Roon `.umc`, point its SIMPL+ symbol at `PlexampDeviceModule.usp` (Save As a new `.umc`; the signals line up one to one),
+set the module's `Host` (the Pi) and `Port` parameters, and put that module in place of the zone. The module forwards the `CRPC` string joins untouched
+(the Smart Object's Crpc.Register is answered by the emulator, which points it at the slot's direct-connect port) and carries the button and feedback joins as
+`CMD <name> [arg]` / `FB <name> <value>` lines. Status: the emulator side is tested against a mock module; the SIMPL+ file has not been compiled or run on a processor.
+`MMS_CIP_TRACE=1` logs the CRPC traffic.
+
 ## Features
 
 Browse the library (including a Plexamp "Search" that jumps by first letter: Home Menu > Search), play, pause, skip, seek, shuffle, repeat, thumbs up/down (Plexamp), fast-forward/rewind (as a growing skip),
