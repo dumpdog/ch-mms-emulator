@@ -122,6 +122,12 @@ set the module's `Host` (the Pi) and `Port` parameters, and put that module in p
 `CMD <name> [arg]` / `FB <name> <value>` lines. Status: the emulator side is tested against a mock module; the SIMPL+ file compiles cleanly (SPlusCC, 3- and 4-Series, 0 errors) but has not been run on a processor.
 `MMS_CIP_TRACE=1` logs the CRPC traffic.
 
+To swap **one** zone of a program that has several Roon zones, use `processor/PlexampZone.usp` (one zone; the Pi address and slot port are two constants at the top) and
+`python processor/swap_roon_zone.py "<program>.smw" "RoonDeviceModule v1.0 Build 10.umc" "Music 2" PlexampZone.usp "<new program>.smw"`.
+It writes a new program with that zone's `RoonDeviceModule` replaced by the Plexamp symbol, every connected join carried over, and leaves the other zones alone.
+Put `PlexampZone.usp` in the program folder and compile it first (`SPlusCC.exe /rebuild PlexampZone.usp /target series3 series4`). On the processor, program slots keep
+separate IP tables and GUI extenders need Project > GUI Extender Management > Sync > Commit after copying a program.
+
 ## Features
 
 Browse the library (including a Plexamp "Search" that jumps by first letter: Home Menu > Search), play, pause, skip, seek, shuffle, repeat, thumbs up/down (Plexamp), fast-forward/rewind (as a growing skip),
