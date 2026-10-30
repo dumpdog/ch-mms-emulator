@@ -174,6 +174,7 @@ class Slot extends EventEmitter {
         const how = m === 'Select' ? await menu.select(params.item) : await menu.pressAndHold(params.item);
         this._busy(false);
         if (how === 'navigated') setTimeout(() => this._announceMenu(), 20);
+        if (how === 'refreshed') { this.jumped = false; setTimeout(() => this._announceMenu(), 20); setTimeout(() => this._announceMenu(), 400); }   // second announce as after a Favorites jump: the panel may not reload the same-level list
         return how !== null;
       }
       case 'Favorites': case 'QuickList': {

@@ -80,6 +80,7 @@ Slot keys: `MAIN`, `A`, `B`, `C`, `D`, `USB`. Re-running keeps your saved answer
 |---|---|
 | `MMS_<SLOT>_TYPE` | `plexamp`, `bluos`, `wiim` or `roon` |
 | `MMS_<SLOT>_URL` | Player address (Plexamp default port 32500, BluOS 11000, WiiM tries HTTPS then HTTP, Roon is the zone name) |
+| `MMS_<SLOT>_LIBRARY` | On a Plexamp slot: the Plex music library to browse, by name or number (default: the first music library). When Plex has several music libraries (e.g. `Music` and `Audiobooks`) the last Home Menu entry, `Library: <name>`, switches to the next one and the Home Menu title shows the current one; the pick is remembered |
 | `MMS_<SLOT>_ROON_ZONE` | On a BluOS slot: also browse and play this Roon zone (Home Menu > Roon) |
 | `MMS_ROON_HOST`, `MMS_ROON_STATE` | Connect to a given Roon Core instead of discovering one; where the pairing is kept |
 | `PLEX_URL`, `PLEX_TOKEN` | Plex server and token (when any slot is Plexamp) |

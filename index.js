@@ -4,6 +4,8 @@
 //   MMS_<SLOT>_TYPE=plexamp|bluos|wiim|roon  what drives each slot; SLOT is MAIN, A, B, C, D or USB (Player A..D); unset slots show "Not configured"
 //   MMS_<SLOT>_URL                       that player's address: Plexamp/Caldera (default port 32500), BluOS (default port 11000) or WiiM/LinkPlay (https, then http);
 //                                        for TYPE=roon it is the Roon zone name
+//   MMS_<SLOT>_LIBRARY                   on a plexamp slot: the Plex music library to browse, by name or number (default: the first music library). With several music
+//                                        libraries the last Home Menu entry switches between them (the pick is remembered)
 //   MMS_<SLOT>_ROON_ZONE                 on a bluos slot: also browse and play that Roon zone from the slot (Home Menu > Roon)
 //   MMS_ROON_HOST (host[:port], optional) connect to this Roon Core instead of discovering one; MMS_ROON_STATE (default ./roon-state.json) holds the pairing
 //   MMS_PLEXAMP_A..D                     older spelling of MMS_<A..D>_TYPE=plexamp + MMS_<A..D>_URL
@@ -46,7 +48,7 @@ function createBackend(name) {
   const k = slotKey(name);
   const legacy = env[`MMS_PLEXAMP_${k}`];
   const type = (env[`MMS_${k}_TYPE`] || (legacy ? 'plexamp' : '')).toLowerCase(), url = env[`MMS_${k}_URL`] || legacy;
-  if (url && type === 'plexamp' && env.PLEX_URL && env.PLEX_TOKEN) return createPlexBackend({ plexUrl: env.PLEX_URL, token: env.PLEX_TOKEN, plexampUrl: url, name, log });
+  if (url && type === 'plexamp' && env.PLEX_URL && env.PLEX_TOKEN) return createPlexBackend({ plexUrl: env.PLEX_URL, token: env.PLEX_TOKEN, plexampUrl: url, library: env[`MMS_${k}_LIBRARY`], libraryFile: path.join(path.dirname(path.resolve(env.MMS_STATE_FILE || path.join(__dirname, 'state.json'))), `library-${k.toLowerCase()}.json`), name, log });
   const zone = env[`MMS_${k}_ROON_ZONE`];
   try {
     if (url && type === 'roon') return createRoonBackend({ core: roon(), zoneName: url, name, log });

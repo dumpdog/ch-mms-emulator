@@ -1,4 +1,5 @@
 'use strict';
+const fs = require('fs');
 // Plex library browse + Plexamp playback for one MMS slot.
 //  - Browse / metadata / ratings: Plex Media Server HTTP API
 //  - Playback control + state: Plexamp (headless) Plex Companion HTTP API, polled once per 1.5 s
@@ -17,13 +18,14 @@ const ACTIONS = ['Ffwd', 'NextTrack', 'Pause', 'Play', 'PlayAll', 'PreviousTrack
 // Presses in the same direction within SKIP_WINDOW_MS grow the skip: 15, 20, 25, 30, 30... seconds.
 const SKIP_STEPS = [15, 20, 25, 30], SKIP_WINDOW_MS = 2000;
 
-function createPlexBackend({ plexUrl, token, plexampUrl, name = 'MMS', log, pollMs = 1500, skipWindowMs = SKIP_WINDOW_MS }) {
+function createPlexBackend({ plexUrl, token, plexampUrl, library, libraryFile, name = 'MMS', log, pollMs = 1500, skipWindowMs = SKIP_WINDOW_MS }) {
   plexUrl = plexUrl.replace(/\/$/, ''); plexampUrl = plexampUrl.replace(/\/$/, '');
   const clientId = `mms-emulator-${name.replace(/\W+/g, '-').toLowerCase()}`;
   const player = new EventEmitter();
   const cur = {};                         // last values emitted to the slot
   let serverId = null, ampId = null, section = null, cmd = 0, rk = null, ready = null, timer = null;
   const meta = new Map(), artCache = new Map();
+  let musicLibs = [], libTitle = '';     // the music libraries on the server, and the title of the one in use
   let queue = null;                       // current Plex play queue per the last Plexamp timeline
 
   // ---------------------------------------------------------------- HTTP
@@ -53,8 +55,14 @@ function createPlexBackend({ plexUrl, token, plexampUrl, name = 'MMS', log, poll
         serverId = (await plex('/identity')).MediaContainer.machineIdentifier;
         ampId = ((await (await fetch(`${plexampUrl}/resources`, { signal: AbortSignal.timeout(8000) })).text()).match(/machineIdentifier="([^"]+)"/) || [])[1];
         const dirs = (await plex('/library/sections')).MediaContainer.Directory || [];
-        section = (dirs.find(d => d.type === 'artist') || {}).key;
-        log(`[plex ${name}] server ${serverId} | plexamp ${ampId} | music section ${section}`);
+        musicLibs = dirs.filter(d => d.type === 'artist');
+        let saved = ''; try { saved = JSON.parse(fs.readFileSync(libraryFile, 'utf8')).library || ''; } catch {}   // the last library picked from the Home Menu wins over the setting
+        const want = String(saved || library || '').trim().toLowerCase();
+        const pick = want && musicLibs.find(d => d.title.toLowerCase() === want || d.key === want);
+        if (want && !pick) log(`[plex ${name}] library '${saved || library}' not found; music libraries: ${musicLibs.map(d => `${d.title} (${d.key})`).join(', ') || 'none'}`);
+        const use = pick || musicLibs[0] || {};
+        section = use.key; libTitle = use.title || '';
+        log(`[plex ${name}] server ${serverId} | plexamp ${ampId} | music section ${section} (${libTitle})${musicLibs.length > 1 && !pick ? ` - ${musicLibs.length} music libraries, set MMS_<slot>_LIBRARY to choose` : ''}`);
         if (!timer) { timer = setInterval(() => poll().catch(() => {}), pollMs); timer.unref(); }
       } catch (e) { ready = null; log(`[plex ${name}] init failed: ${e.message}`); throw e; }
     })());
@@ -208,18 +216,47 @@ function createPlexBackend({ plexUrl, token, plexampUrl, name = 'MMS', log, poll
     context: () => choose2(a.title, `/library/metadata/${a.ratingKey}`, ['Play all', () => playKey(`/library/metadata/${a.ratingKey}`)], ['Shuffle all', () => playKey(`/library/metadata/${a.ratingKey}`, { shuffle: true })]) });
   const playlistItem = p => item(p, { open: () => trackList({ ...p, type: 'playlist' }, `/playlists/${p.ratingKey}`, `/playlists/${p.ratingKey}/items`),
     context: () => choose2(p.title, `/playlists/${p.ratingKey}`, ['Play playlist', () => playKey(`/playlists/${p.ratingKey}`)], ['Shuffle playlist', () => playKey(`/playlists/${p.ratingKey}`, { shuffle: true })]) });
+  // Plex makes one set of smart playlists (All Music, Recently Played ...) per music library; list only the ones for this slot's library.
+  // The list call does not say which library a smart playlist is for, so ask for each (cached).
+  let plCache = null, plAt = 0;
+  async function loadPlaylists() {
+    if (plCache && Date.now() - plAt < 30000) return plCache;
+    await init();
+    const all = (await page('/playlists?playlistType=audio', 0, 500)).items;
+    const keep = await Promise.all(all.map(async p => {
+      if (!p.smart) return true;
+      try {
+        const m = ((await plex(`/playlists/${p.ratingKey}`)).MediaContainer.Metadata || [])[0] || {};
+        const sec = /\/library\/sections\/(\d+)/.exec(decodeURIComponent(m.content || ''));
+        return !sec || sec[1] === String(section);
+      } catch { return true; }
+    }));
+    plAt = Date.now();
+    return plCache = all.filter((_, i) => keep[i]);
+  }
+  const playlistsNode = () => ({ title: 'Playlists', count: async () => (await loadPlaylists()).length, page: async (start, n) => (await loadPlaylists()).slice(start, start + n).map(playlistItem) });
   const songItem = t => item(t, { play: () => playKey(`/library/metadata/${t.ratingKey}`), context: () => choose2(t.title, `/library/metadata/${t.ratingKey}`, ['Play now', () => playKey(`/library/metadata/${t.ratingKey}`)]) });
 
   const lib = sub => `/library/sections/${section}/${sub}`;
-  const homeMenu = () => ({ title: 'Home Menu', items: [
-    { l1: 'Playlists', open: () => paged('Playlists', '/playlists?playlistType=audio', playlistItem) },
-    { l1: 'Albums', open: () => paged('Albums', lib('albums?sort=titleSort'), albumItem) },
-    { l1: 'Artists', open: () => paged('Artists', lib('all?type=8&sort=titleSort'), artistItem) },
-    { l1: 'Recently Added', open: () => paged('Recently Added', lib('albums?sort=addedAt:desc'), albumItem, 100) },
-    { l1: 'Recently Played', open: () => paged('Recently Played', lib('albums?sort=lastViewedAt:desc'), albumItem, 100) },
-    { l1: 'Songs', open: () => paged('Titles', lib('all?type=10&sort=titleSort'), songItem) },
-    { l1: 'Search', open: () => searchMenu() },
-  ] });
+  // With more than one music library the last Home Menu entry switches to the next one (remembered in libraryFile) and the title names the current one.
+  function switchLibrary() {
+    const i = musicLibs.findIndex(d => d.key === section), next = musicLibs[(i + 1) % musicLibs.length];
+    section = next.key; libTitle = next.title; plCache = null;
+    log(`[plex ${name}] library -> ${libTitle} (${section})`);
+    try { fs.writeFileSync(libraryFile, JSON.stringify({ library: libTitle })); } catch (e) { log(`[plex ${name}] could not save the library choice: ${e.message}`); }
+  }
+  const homeMenu = () => ({
+    get title() { return musicLibs.length > 1 ? `Home Menu: ${libTitle}` : 'Home Menu'; },
+    items: () => [
+      { l1: 'Playlists', open: playlistsNode },
+      { l1: 'Albums', open: () => paged('Albums', lib('albums?sort=titleSort'), albumItem) },
+      { l1: 'Artists', open: () => paged('Artists', lib('all?type=8&sort=titleSort'), artistItem) },
+      { l1: 'Recently Added', open: () => paged('Recently Added', lib('albums?sort=addedAt:desc'), albumItem, 100) },
+      { l1: 'Recently Played', open: () => paged('Recently Played', lib('albums?sort=lastViewedAt:desc'), albumItem, 100) },
+      { l1: 'Songs', open: () => paged('Titles', lib('all?type=10&sort=titleSort'), songItem) },
+      { l1: 'Search', open: () => searchMenu() },
+      ...(musicLibs.length > 1 ? [{ l1: `Library: ${libTitle}`, l2: `Select to switch to ${musicLibs[(musicLibs.findIndex(d => d.key === section) + 1) % musicLibs.length].title}`, play: switchLibrary, refresh: true }] : []),
+    ] });
 
   // Crestron Home has no text entry, so "search" is a first-letter jump: kind -> letter -> matching items.
   // Plex's firstCharacter index lists the letters that exist (with counts); if it is unavailable, offer # and A-Z.

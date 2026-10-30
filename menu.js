@@ -41,7 +41,7 @@ class Menu {
     const it = await this._item(n);
     if (!it) return null;
     if (it.open) { this.stack.push(await this._enter(await it.open(), this.top.level + 1)); return 'navigated'; }
-    if (it.play) { await it.play(); return 'played'; }
+    if (it.play) { await it.play(); if (it.refresh) { await this.backToTop(); return 'refreshed'; } return 'played'; }
     return null;
   }
   async pressAndHold(n) {
