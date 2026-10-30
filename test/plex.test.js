@@ -70,6 +70,7 @@ test('browse albums, play a track, track state, thumbs', async t => {
   const pm = m.calls.find(c => c.includes('/player/playback/playMedia'));
   assert.ok(pm, 'playMedia sent to Plexamp');
   assert.match(pm, /key=%2Flibrary%2Fmetadata%2F101/); assert.match(pm, /machineIdentifier=SERVER1/); assert.match(pm, /containerKey=%2FplayQueues%2F55/);
+  assert.ok(!/providerIdentifier|address=/.test(pm), 'first playMedia is the short form (a Caldera ignores the full one with "could not connect to provider")');
   assert.ok(m.calls.some(c => c.startsWith('POST /playQueues') && c.includes('uri=server%3A%2F%2FSERVER1%2Fcom.plexapp.plugins.library%2Flibrary%2Fmetadata%2F10')));
   assert.deepStrictEqual(m.calls.filter(c => c.includes('SECRET')).map(c => c.split('?')[0]), ['GET /player/playback/playMedia'], 'token only goes to Plexamp playMedia');
 

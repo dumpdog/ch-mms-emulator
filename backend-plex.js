@@ -25,6 +25,7 @@ function createPlexBackend({ plexUrl, token, plexampUrl, library, libraryFile, n
   const cur = {};                         // last values emitted to the slot
   let serverId = null, ampId = null, section = null, cmd = 0, rk = null, ready = null, timer = null;
   const meta = new Map(), artCache = new Map();
+  let playLean = null;                    // which playMedia form Plexamp accepts: true short, false full, null not known yet
   let musicLibs = [], libTitle = '';     // the music libraries on the server, and the title of the one in use
   let queue = null;                       // current Plex play queue per the last Plexamp timeline
 
@@ -128,15 +129,27 @@ function createPlexBackend({ plexUrl, token, plexampUrl, library, libraryFile, n
     const t1 = Date.now();
     const first = startKey || ((pq.Metadata || [])[0] || {}).key;
     if (!first) throw new Error('empty play queue');
-    const u = new URL(plexUrl);
-    await amp('playback/playMedia', {
-      type: 'music', providerIdentifier: 'com.plexapp.plugins.library', key: first, offset: '0', machineIdentifier: serverId,
-      address: u.hostname, port: u.port || '32400', protocol: u.protocol.replace(':', ''),
+    const u = new URL(plexUrl), id = first.split('/').pop();
+    const ask = lean => amp('playback/playMedia', {
+      type: 'music', key: first, offset: '0', machineIdentifier: serverId,
+      // a Caldera with a server that requires secure connections accepts the full form but answers "could not connect to provider" and plays nothing;
+      // it plays when the provider and address are left out, so that is tried first and the full form is the fallback (whichever works is remembered)
+      ...(lean ? {} : { providerIdentifier: 'com.plexapp.plugins.library', address: u.hostname, port: u.port || '32400', protocol: u.protocol.replace(':', '') }),
       containerKey: `/playQueues/${pq.playQueueID}?own=1&window=200&includeBoundaries=1`, token,
     }, 25000);
+    const lean = playLean !== false;
+    await ask(lean);
     log(`[plex ${name}] playing ${key}${startKey ? ' from ' + startKey : ''}${shuffle ? ' shuffled' : ''} (${pq.playQueueTotalCount} items) - plex queue ${t1 - t0} ms, plexamp playMedia ${Date.now() - t1} ms`);
     emit({ PlayerState: 'playing' });
     for (const ms of [300, 900, 1800]) setTimeout(() => poll().catch(() => {}), ms);
+    setTimeout(async () => {
+      if (String(rk) === id) { playLean = lean; return; }
+      if (playLean === null) {   // not tried the other form yet
+        log(`[plex ${name}] plexamp did not start ${first} with the ${lean ? 'short' : 'full'} playMedia; trying the ${lean ? 'full' : 'short'} one`);
+        playLean = !lean; await ask(!lean).catch(() => {}); poll().catch(() => {});
+        setTimeout(() => { if (String(rk) !== id) { playLean = null; log(`[plex ${name}] plexamp did not start ${first} with either playMedia form (it is on ${rk})`); } }, 2600).unref();
+      }
+    }, 2600).unref();
   }
   // the menu answers Crestron Home straight away; the queue build and Plexamp's (possibly slow) reply happen in the background
   const playKey = (key, opts) => { playKeyNow(key, opts).catch(e => log(`[plex ${name}] play ${key} failed: ${e.message}`)); };
